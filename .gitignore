@@ -1,0 +1,30 @@
+# CMake build directories and generated files
+build*/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+CTestTestfile.cmake
+Testing/
+
+# Generated Qt/autogen output
+*_autogen/
+*._autogen/
+
+# Compiled binaries and libraries
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dll
+*.dylib
+*.exe
+
+# Local editor and OS files
+.superpowers/
+prompt
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
