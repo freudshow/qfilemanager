@@ -3,8 +3,8 @@
 #include "models/FavoritesModel.h"
 
 #include <QAction>
-#include <QListView>
 #include <QLabel>
+#include <QListView>
 #include <QMenu>
 #include <QVBoxLayout>
 
@@ -14,6 +14,7 @@ FavoritesSidebar::FavoritesSidebar(QWidget *parent)
     setObjectName("favoritesSidebar");
     listView_->setObjectName("favoritesListView");
     listView_->setContextMenuPolicy(Qt::CustomContextMenu);
+    addCurrentFolderAction_ = new QAction(tr("Add Current Folder"), this);
 
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(12, 12, 12, 12);
@@ -26,6 +27,7 @@ FavoritesSidebar::FavoritesSidebar(QWidget *parent)
     connect(listView_, &QListView::activated, this, &FavoritesSidebar::activateFavorite);
     connect(listView_, &QListView::doubleClicked, this, &FavoritesSidebar::activateFavorite);
     connect(listView_, &QListView::customContextMenuRequested, this, &FavoritesSidebar::showContextMenu);
+    connect(addCurrentFolderAction_, &QAction::triggered, this, &FavoritesSidebar::addCurrentFolderRequested);
 }
 
 void FavoritesSidebar::setModel(FavoritesModel *model) {
@@ -39,6 +41,10 @@ FavoritesModel *FavoritesSidebar::model() const {
 
 QListView *FavoritesSidebar::listView() const {
     return listView_;
+}
+
+QAction *FavoritesSidebar::addCurrentFolderAction() const {
+    return addCurrentFolderAction_;
 }
 
 void FavoritesSidebar::activateFavorite(const QModelIndex &index) {
@@ -55,19 +61,17 @@ void FavoritesSidebar::activateFavorite(const QModelIndex &index) {
 }
 
 void FavoritesSidebar::showContextMenu(const QPoint &position) {
-    if (model_ == nullptr) {
-        return;
-    }
-
     const QModelIndex index = listView_->indexAt(position);
-    if (!index.isValid()) {
-        return;
-    }
 
     QMenu menu(this);
-    QAction *removeAction = menu.addAction(tr("Remove"));
+    menu.addAction(addCurrentFolderAction_);
+    QAction *removeAction = nullptr;
+    if (index.isValid()) {
+        menu.addSeparator();
+        removeAction = menu.addAction(tr("Remove"));
+    }
     QAction *selectedAction = menu.exec(listView_->viewport()->mapToGlobal(position));
-    if (selectedAction == removeAction) {
+    if (model_ != nullptr && selectedAction == removeAction) {
         model_->removeFavorite(index.row());
     }
 }

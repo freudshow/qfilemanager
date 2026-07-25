@@ -37,7 +37,23 @@ FileBrowserWidget *TabManager::addTab(const QString &path) {
     const QString tabTitle = QFileInfo(browser->currentPath()).fileName().isEmpty() ? browser->currentPath() : QFileInfo(browser->currentPath()).fileName();
     tabWidget_->addTab(browser, tabTitle);
     connect(browser, &FileBrowserWidget::pathChanged, this, updateTitle);
+    connect(browser, &FileBrowserWidget::openPathInNewTabRequested, this, [this](const QString &newTabPath) {
+        FileBrowserWidget *newBrowser = addTab(newTabPath);
+        if (newBrowser != nullptr) {
+            tabWidget_->setCurrentWidget(newBrowser);
+        }
+    });
     return browser;
+}
+
+void TabManager::closeTab(int index) {
+    if (tabWidget_ == nullptr || index < 0 || index >= tabWidget_->count() || tabWidget_->count() <= 1) {
+        return;
+    }
+
+    QWidget *widget = tabWidget_->widget(index);
+    tabWidget_->removeTab(index);
+    delete widget;
 }
 
 void TabManager::restoreTabs(const AppSettings &settings) {

@@ -4,10 +4,12 @@
 #include <QDir>
 #include <QFileInfo>
 #include <QFileSystemModel>
+#include <QHBoxLayout>
 #include <QItemSelectionModel>
 #include <QLineEdit>
 #include <QMenu>
 #include <QTableView>
+#include <QToolButton>
 #include <QUrl>
 #include <QVBoxLayout>
 
@@ -15,10 +17,28 @@ FileBrowserWidget::FileBrowserWidget(QWidget *parent)
     : QWidget(parent)
     , model_(new QFileSystemModel(this))
     , view_(new QTableView(this))
-    , addressBar_(new QLineEdit(this)) {
+    , addressBar_(new QLineEdit(this))
+    , upButton_(new QToolButton(this)) {
     setObjectName("fileBrowserWidget");
     addressBar_->setObjectName("addressBar");
+    addressBar_->setPlaceholderText(tr("Enter a folder path"));
     view_->setObjectName("fileBrowserView");
+    upButton_->setObjectName("upButton");
+    upButton_->setText(QStringLiteral("↑"));
+    upButton_->setToolTip(tr("Go to parent folder"));
+
+    auto *addressContainer = new QWidget(this);
+    addressContainer->setObjectName("addressBarContainer");
+    auto *addressLayout = new QHBoxLayout(addressContainer);
+    addressLayout->setContentsMargins(8, 6, 8, 6);
+    addressLayout->setSpacing(8);
+    addressLayout->addWidget(upButton_);
+    addressLayout->addWidget(addressBar_, 1);
+    addressContainer->setStyleSheet(QStringLiteral(
+        "QWidget#addressBarContainer { background: #f6f8fb; border: 1px solid #d7dee8; border-radius: 10px; }"
+        "QLineEdit#addressBar { background: white; border: 1px solid #c8d2df; border-radius: 8px; padding: 6px 10px; }"
+        "QToolButton#upButton { background: #ffffff; border: 1px solid #c8d2df; border-radius: 8px; padding: 5px 10px; }"
+        "QToolButton#upButton:hover { background: #eaf1f8; }"));
 
     model_->setFilter(QDir::AllEntries | QDir::NoDotAndDotDot | QDir::AllDirs);
     model_->setRootPath(QDir::rootPath());
@@ -32,10 +52,11 @@ FileBrowserWidget::FileBrowserWidget(QWidget *parent)
 
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
-    layout->addWidget(addressBar_);
+    layout->addWidget(addressContainer);
     layout->addWidget(view_, 1);
 
     connect(addressBar_, &QLineEdit::returnPressed, this, &FileBrowserWidget::navigateFromAddressBar);
+    connect(upButton_, &QToolButton::clicked, this, &FileBrowserWidget::navigateToParentDirectory);
     connect(view_, &QTableView::doubleClicked, this, &FileBrowserWidget::openIndex);
     connect(view_->selectionModel(), &QItemSelectionModel::selectionChanged, this, &FileBrowserWidget::emitSelectedPath);
     connect(view_, &QWidget::customContextMenuRequested, this, &FileBrowserWidget::showContextMenu);
@@ -78,6 +99,13 @@ void FileBrowserWidget::navigateFromAddressBar() {
     setCurrentPath(addressBar_->text());
 }
 
+void FileBrowserWidget::navigateToParentDirectory() {
+    QDir directory(currentPath_);
+    if (directory.cdUp()) {
+        setCurrentPath(directory.absolutePath());
+    }
+}
+
 void FileBrowserWidget::openIndex(const QModelIndex &index) {
     if (!index.isValid()) {
         return;
@@ -109,9 +137,15 @@ void FileBrowserWidget::emitSelectedPath(const QItemSelection &selected, const Q
 }
 
 void FileBrowserWidget::showContextMenu(const QPoint &position) {
+    const QModelIndex index = view_->indexAt(position);
+    const QString path = index.isValid() ? model_->filePath(index) : currentPath_;
+    const QFileInfo info(path);
+
     QMenu menu(this);
-    menu.addAction(tr("Open"));
-    menu.addAction(tr("Open in New Tab"));
+    QAction *openAction = menu.addAction(tr("Open"));
+    QAction *openInNewTabAction = menu.addAction(tr("Open in New Tab"));
+    openAction->setEnabled(index.isValid());
+    openInNewTabAction->setEnabled(info.isDir());
     menu.addSeparator();
     menu.addAction(tr("Copy"));
     menu.addAction(tr("Move"));
@@ -120,5 +154,10 @@ void FileBrowserWidget::showContextMenu(const QPoint &position) {
     menu.addSeparator();
     menu.addAction(tr("New Folder"));
     menu.addAction(tr("Properties"));
-    menu.exec(view_->viewport()->mapToGlobal(position));
+    QAction *selectedAction = menu.exec(view_->viewport()->mapToGlobal(position));
+    if (selectedAction == openAction && index.isValid()) {
+        openIndex(index);
+    } else if (selectedAction == openInNewTabAction && info.isDir()) {
+        emit openPathInNewTabRequested(path);
+    }
 }

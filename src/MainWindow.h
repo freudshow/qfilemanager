@@ -19,6 +19,7 @@ public:
 private:
     void closeEvent(QCloseEvent *event) override;
     void navigateCurrentTabToFavorite(const QString &path);
+    void addCurrentFolderToFavorites();
     AppSettings collectSettings() const;
     void saveSettings();
     void persistFavorites();

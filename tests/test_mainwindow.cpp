@@ -9,6 +9,7 @@
 #include <QTabWidget>
 #include <QTableView>
 #include <QTemporaryDir>
+#include <QToolButton>
 #include <QWidget>
 
 #include "MainWindow.h"
@@ -29,6 +30,8 @@ private slots:
     void restoresSavedTabsFromSettingsStore();
     void restoresSavedFavoritesAndActivatesCurrentTab();
     void persistsFavoriteRemovalWithoutDroppingSavedTabs();
+    void addsCurrentFolderToFavoritesFromSidebarRequest();
+    void tabStripNewTabButtonCreatesHomeTab();
     void metadataPanelUpdatesFromCurrentBrowserSelection();
 };
 
@@ -215,6 +218,41 @@ void MainWindowTest::persistsFavoriteRemovalWithoutDroppingSavedTabs() {
     QVERIFY(reloadedSidebar != nullptr);
     QVERIFY(reloadedSidebar->model() != nullptr);
     QCOMPARE(reloadedSidebar->model()->rowCount(), 0);
+}
+
+void MainWindowTest::addsCurrentFolderToFavoritesFromSidebarRequest() {
+    QTemporaryDir root;
+    QVERIFY(root.isValid());
+    AppSettings settings;
+    settings.tabs.append({root.path(), {}, {}});
+    SettingsStore store;
+    QString error;
+    QVERIFY2(store.save(settings, &error), qPrintable(error));
+
+    MainWindow window;
+    auto *sidebar = findFavoritesSidebar(window);
+    QVERIFY(sidebar != nullptr);
+
+    emit sidebar->addCurrentFolderRequested();
+
+    QCOMPARE(sidebar->model()->rowCount(), 1);
+    QCOMPARE(sidebar->model()->favoriteAt(0).path, root.path());
+}
+
+void MainWindowTest::tabStripNewTabButtonCreatesHomeTab() {
+    MainWindow window;
+    auto *tabWidget = findTabWidget(window);
+    QVERIFY(tabWidget != nullptr);
+    const int originalCount = tabWidget->count();
+    auto *newTabButton = window.findChild<QToolButton *>("newTabButton");
+    QVERIFY(newTabButton != nullptr);
+
+    QTest::mouseClick(newTabButton, Qt::LeftButton);
+
+    QCOMPARE(tabWidget->count(), originalCount + 1);
+    auto *browser = qobject_cast<FileBrowserWidget *>(tabWidget->currentWidget());
+    QVERIFY(browser != nullptr);
+    QCOMPARE(browser->currentPath(), QDir::homePath());
 }
 
 void MainWindowTest::metadataPanelUpdatesFromCurrentBrowserSelection() {

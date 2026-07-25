@@ -12,6 +12,7 @@ class FavoritesSidebarTest : public QObject {
 
 private slots:
     void doesNotActivateUnavailableFavorite();
+    void requestsCurrentFolderFavoriteFromContextMenuAction();
 };
 
 void FavoritesSidebarTest::doesNotActivateUnavailableFavorite() {
@@ -28,6 +29,18 @@ void FavoritesSidebarTest::doesNotActivateUnavailableFavorite() {
     emit sidebar.listView()->activated(model.index(0, 0));
 
     QCOMPARE(activatedSpy.count(), 0);
+}
+
+void FavoritesSidebarTest::requestsCurrentFolderFavoriteFromContextMenuAction() {
+    FavoritesModel model;
+    FavoritesSidebar sidebar;
+    sidebar.setModel(&model);
+    QSignalSpy addSpy(&sidebar, &FavoritesSidebar::addCurrentFolderRequested);
+
+    QVERIFY(sidebar.addCurrentFolderAction() != nullptr);
+    sidebar.addCurrentFolderAction()->trigger();
+
+    QCOMPARE(addSpy.count(), 1);
 }
 
 QTEST_MAIN(FavoritesSidebarTest)

@@ -3,6 +3,7 @@
 #include <QWidget>
 
 class FileBrowserWidget;
+class QToolButton;
 class QTabWidget;
 class TabManager;
 
@@ -17,4 +18,5 @@ public:
 
 private:
     QTabWidget *tabWidget_ = nullptr;
+    QToolButton *newTabButton_ = nullptr;
 };

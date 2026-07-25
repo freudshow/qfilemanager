@@ -3,6 +3,7 @@
 #include <QWidget>
 
 class FavoritesModel;
+class QAction;
 class QListView;
 
 class FavoritesSidebar : public QWidget {
@@ -13,9 +14,11 @@ public:
     void setModel(FavoritesModel *model);
     FavoritesModel *model() const;
     QListView *listView() const;
+    QAction *addCurrentFolderAction() const;
 
 signals:
     void favoriteActivated(const QString &path);
+    void addCurrentFolderRequested();
 
 private slots:
     void activateFavorite(const QModelIndex &index);
@@ -24,4 +27,5 @@ private slots:
 private:
     FavoritesModel *model_ = nullptr;
     QListView *listView_ = nullptr;
+    QAction *addCurrentFolderAction_ = nullptr;
 };

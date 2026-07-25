@@ -11,6 +11,7 @@
 #include <QTabWidget>
 #include <QTableView>
 #include <QTemporaryDir>
+#include <QToolButton>
 #include <QUrl>
 
 #include "services/TabManager.h"
@@ -36,6 +37,8 @@ private slots:
     void restoresSavedTabs();
     void setCurrentPathUpdatesViewAndEmits();
     void addressBarNavigatesToExistingDirectoryOnly();
+    void upButtonNavigatesToParentDirectory();
+    void addressBarUsesModernNavigationChrome();
     void doubleClickingFolderChangesCurrentPath();
     void doubleClickingFileOpensDesktopUrl();
     void selectingEntryEmitsSelectedPath();
@@ -110,6 +113,30 @@ void FileBrowserWidgetTest::addressBarNavigatesToExistingDirectoryOnly() {
     QTest::keyClick(browser.addressBar(), Qt::Key_Return);
     QCOMPARE(browser.currentPath(), second.path());
     QCOMPARE(browser.addressBar()->text(), second.path());
+}
+
+void FileBrowserWidgetTest::upButtonNavigatesToParentDirectory() {
+    QTemporaryDir root;
+    QVERIFY(root.isValid());
+    QVERIFY(QDir(root.path()).mkdir("child"));
+    const QString childPath = QDir(root.path()).filePath("child");
+
+    FileBrowserWidget browser;
+    QVERIFY(browser.setCurrentPath(childPath));
+    auto *upButton = browser.findChild<QToolButton *>("upButton");
+    QVERIFY(upButton != nullptr);
+
+    QTest::mouseClick(upButton, Qt::LeftButton);
+
+    QCOMPARE(browser.currentPath(), root.path());
+}
+
+void FileBrowserWidgetTest::addressBarUsesModernNavigationChrome() {
+    FileBrowserWidget browser;
+
+    QVERIFY(browser.findChild<QWidget *>("addressBarContainer") != nullptr);
+    QVERIFY(browser.findChild<QToolButton *>("upButton") != nullptr);
+    QCOMPARE(browser.addressBar()->placeholderText(), QString("Enter a folder path"));
 }
 
 void FileBrowserWidgetTest::doubleClickingFolderChangesCurrentPath() {

@@ -11,6 +11,8 @@
 
 #include <QTabWidget>
 #include <QCloseEvent>
+#include <QDir>
+#include <QFileInfo>
 #include <QSplitter>
 #include <QVBoxLayout>
 #include <QWidget>
@@ -39,6 +41,7 @@ MainWindow::MainWindow(QWidget *parent)
     auto *favoritesSidebar = new FavoritesSidebar(splitter_);
     favoritesSidebar->setModel(favoritesModel_);
     connect(favoritesSidebar, &FavoritesSidebar::favoriteActivated, this, &MainWindow::navigateCurrentTabToFavorite);
+    connect(favoritesSidebar, &FavoritesSidebar::addCurrentFolderRequested, this, &MainWindow::addCurrentFolderToFavorites);
     connect(favoritesModel_, &QAbstractItemModel::rowsInserted, this, [this] { persistFavorites(); });
     connect(favoritesModel_, &QAbstractItemModel::rowsRemoved, this, [this] { persistFavorites(); });
     connect(favoritesModel_, &QAbstractItemModel::modelReset, this, [this] { persistFavorites(); });
@@ -76,6 +79,22 @@ void MainWindow::navigateCurrentTabToFavorite(const QString &path) {
 
 void MainWindow::persistFavorites() {
     saveSettings();
+}
+
+void MainWindow::addCurrentFolderToFavorites() {
+    QTabWidget *tabWidget = tabManager_->tabWidget();
+    if (tabWidget == nullptr || favoritesModel_ == nullptr) {
+        return;
+    }
+
+    auto *browser = qobject_cast<FileBrowserWidget *>(tabWidget->currentWidget());
+    if (browser == nullptr || browser->currentPath().isEmpty()) {
+        return;
+    }
+
+    const QFileInfo info(browser->currentPath());
+    const QString name = info.fileName().isEmpty() ? QDir::cleanPath(browser->currentPath()) : info.fileName();
+    favoritesModel_->addFavorite(name, browser->currentPath());
 }
 
 AppSettings MainWindow::collectSettings() const {

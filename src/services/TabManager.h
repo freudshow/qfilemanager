@@ -16,6 +16,7 @@ public:
     void setTabWidget(QTabWidget *tabWidget);
     QTabWidget *tabWidget() const;
     FileBrowserWidget *addTab(const QString &path);
+    void closeTab(int index);
     void restoreTabs(const AppSettings &settings);
     QVector<TabState> tabStates() const;
     int count() const;
