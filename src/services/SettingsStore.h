@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QByteArray>
+#include <QHash>
 #include <QString>
 #include <QVector>
 
@@ -22,6 +23,7 @@ struct AppSettings {
     QVector<int> splitterSizes;
     QVector<TabState> tabs;
     QVector<FavoriteState> favorites;
+    QHash<QString, QString> openWithDefaults;
     bool showHiddenFiles = false;
     bool confirmDeleteToTrash = true;
 };

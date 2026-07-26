@@ -3,6 +3,8 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QStandardPaths>
 
 #include "services/SettingsStore.h"
@@ -17,6 +19,8 @@ private slots:
     void invalidTopLevelJsonCreatesBackupAndFallsBack();
     void malformedFieldValuesCreateBackupAndFallback_data();
     void malformedFieldValuesCreateBackupAndFallback();
+    void savesAndLoadsOpenWithDefaults();
+    void rejectsInvalidOpenWithDefaults();
 };
 
 namespace {
@@ -172,6 +176,44 @@ void SettingsStoreTest::malformedFieldValuesCreateBackupAndFallback() {
     QVERIFY(loaded.favorites.isEmpty());
     QVERIFY(!loaded.showHiddenFiles);
     QVERIFY(loaded.confirmDeleteToTrash);
+}
+
+void SettingsStoreTest::savesAndLoadsOpenWithDefaults() {
+    QTemporaryDir configDir;
+    QVERIFY(configDir.isValid());
+    qputenv("XDG_CONFIG_HOME", configDir.path().toUtf8());
+
+    AppSettings settings;
+    settings.openWithDefaults.insert(QStringLiteral(".txt"), QStringLiteral("/usr/bin/kate"));
+    settings.openWithDefaults.insert(QStringLiteral(".png"), QStringLiteral("C:/Program Files/Viewer/viewer.exe"));
+
+    SettingsStore store;
+    QString error;
+    QVERIFY2(store.save(settings, &error), qPrintable(error));
+
+    AppSettings loaded;
+    QVERIFY2(store.load(loaded, &error), qPrintable(error));
+    QCOMPARE(loaded.openWithDefaults.value(QStringLiteral(".txt")), QStringLiteral("/usr/bin/kate"));
+    QCOMPARE(loaded.openWithDefaults.value(QStringLiteral(".png")), QStringLiteral("C:/Program Files/Viewer/viewer.exe"));
+}
+
+void SettingsStoreTest::rejectsInvalidOpenWithDefaults() {
+    QTemporaryDir configDir;
+    QVERIFY(configDir.isValid());
+    qputenv("XDG_CONFIG_HOME", configDir.path().toUtf8());
+
+    SettingsStore store;
+    QFile settingsFile(store.settingsPath());
+    QVERIFY(QDir().mkpath(QFileInfo(settingsFile).absolutePath()));
+    QVERIFY(settingsFile.open(QIODevice::WriteOnly));
+    const QJsonObject root{{QStringLiteral("version"), 1}, {QStringLiteral("openWithDefaults"), QJsonObject{{QStringLiteral(".txt"), 42}}}};
+    settingsFile.write(QJsonDocument(root).toJson());
+    settingsFile.close();
+
+    AppSettings loaded;
+    QString error;
+    QVERIFY(!store.load(loaded, &error));
+    QVERIFY2(error.contains(QStringLiteral("openWithDefaults")), qPrintable(error));
 }
 
 QTEST_MAIN(SettingsStoreTest)

@@ -63,6 +63,14 @@ QJsonArray favoritesToJson(const QVector<FavoriteState> &favorites) {
     return array;
 }
 
+QJsonObject openWithDefaultsToJson(const QHash<QString, QString> &defaults) {
+    QJsonObject object;
+    for (auto it = defaults.cbegin(); it != defaults.cend(); ++it) {
+        object.insert(it.key(), it.value());
+    }
+    return object;
+}
+
 bool readBase64Field(const QJsonObject &object, const QString &key, const QString &fieldName, QByteArray &value, QString *errorMessage) {
     const QJsonValue fieldValue = object.value(key);
     if (fieldValue.isUndefined()) {
@@ -202,6 +210,32 @@ bool readFavorites(const QJsonObject &root, AppSettings &settings, QString *erro
     return true;
 }
 
+bool readOpenWithDefaults(const QJsonObject &root, AppSettings &settings, QString *errorMessage) {
+    const QJsonValue value = root.value("openWithDefaults");
+    if (value.isUndefined()) {
+        return true;
+    }
+    if (!value.isObject()) {
+        setError(errorMessage, "Invalid settings: openWithDefaults must be an object.");
+        return false;
+    }
+
+    settings.openWithDefaults.clear();
+    const QJsonObject object = value.toObject();
+    for (auto it = object.constBegin(); it != object.constEnd(); ++it) {
+        if (!it.value().isString()) {
+            setError(errorMessage, "Invalid settings: openWithDefaults values must be strings.");
+            return false;
+        }
+        if (!it.key().startsWith(QStringLiteral("."))) {
+            setError(errorMessage, "Invalid settings: openWithDefaults keys must be file extensions.");
+            return false;
+        }
+        settings.openWithDefaults.insert(it.key().toLower(), it.value().toString());
+    }
+    return true;
+}
+
 bool readOptions(const QJsonObject &root, AppSettings &settings, QString *errorMessage) {
     const QJsonValue optionsValue = root.value("options");
     if (optionsValue.isUndefined()) {
@@ -230,7 +264,7 @@ bool readOptions(const QJsonObject &root, AppSettings &settings, QString *errorM
 bool readSettingsObject(const QJsonObject &root, AppSettings &settings, QString *errorMessage) {
     settings = AppSettings{};
     return readVersion(root, settings, errorMessage) && readWindowObject(root, settings, errorMessage) && readTabs(root, settings, errorMessage)
-        && readFavorites(root, settings, errorMessage) && readOptions(root, settings, errorMessage);
+        && readFavorites(root, settings, errorMessage) && readOpenWithDefaults(root, settings, errorMessage) && readOptions(root, settings, errorMessage);
 }
 
 } // namespace
@@ -298,6 +332,7 @@ bool SettingsStore::save(const AppSettings &settings, QString *errorMessage) {
     root["window"] = window;
     root["tabs"] = tabsToJson(settings.tabs);
     root["favorites"] = favoritesToJson(settings.favorites);
+    root["openWithDefaults"] = openWithDefaultsToJson(settings.openWithDefaults);
     root["options"] = options;
 
     QSaveFile file(path);
