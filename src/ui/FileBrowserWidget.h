@@ -57,5 +57,8 @@ private:
     ViewMode viewMode_ = ViewMode::Details;
     QLineEdit *addressBar_ = nullptr;
     QToolButton *upButton_ = nullptr;
+    QToolButton *listViewButton_ = nullptr;
+    QToolButton *detailsViewButton_ = nullptr;
+    QToolButton *tilesViewButton_ = nullptr;
     QString currentPath_;
 };
