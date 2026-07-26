@@ -23,6 +23,8 @@ private:
     AppSettings collectSettings() const;
     void saveSettings();
     void persistFavorites();
+    void applyOpenWithDefaults(const QHash<QString, QString> &defaults);
+    void connectBrowserSettings(FileBrowserWidget *browser);
     void connectBrowserMetadata(FileBrowserWidget *browser);
 
     TabManager *tabManager_ = nullptr;

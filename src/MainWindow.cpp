@@ -36,7 +36,12 @@ MainWindow::MainWindow(QWidget *parent)
     SettingsStore store;
     store.load(settings);
     favoritesModel_->setFavorites(settings.favorites);
+    tabManager_->setOpenWithDefaults(settings.openWithDefaults);
     tabManager_->restoreTabs(settings);
+    connect(tabManager_, &TabManager::tabAdded, this, [this](FileBrowserWidget *browser) {
+        connectBrowserSettings(browser);
+        connectBrowserMetadata(browser);
+    });
 
     auto *favoritesSidebar = new FavoritesSidebar(splitter_);
     favoritesSidebar->setModel(favoritesModel_);
@@ -48,6 +53,7 @@ MainWindow::MainWindow(QWidget *parent)
 
     metadataPanel_ = new MetadataPanel(splitter_);
     for (int i = 0; i < tabManager_->count(); ++i) {
+        connectBrowserSettings(tabManager_->browserAt(i));
         connectBrowserMetadata(tabManager_->browserAt(i));
     }
 
@@ -111,6 +117,9 @@ AppSettings MainWindow::collectSettings() const {
     }
     settings.tabs = tabManager_ == nullptr ? QVector<TabState>() : tabManager_->tabStates();
     settings.favorites = favoritesModel_->favorites();
+    if (tabManager_ != nullptr && tabManager_->count() > 0 && tabManager_->browserAt(0) != nullptr) {
+        settings.openWithDefaults = tabManager_->browserAt(0)->openWithDefaults();
+    }
     return settings;
 }
 
@@ -118,6 +127,21 @@ void MainWindow::saveSettings() {
     SettingsStore store;
     const AppSettings settings = collectSettings();
     store.save(settings);
+}
+
+void MainWindow::applyOpenWithDefaults(const QHash<QString, QString> &defaults) {
+    if (tabManager_ != nullptr) {
+        tabManager_->setOpenWithDefaults(defaults);
+    }
+    saveSettings();
+}
+
+void MainWindow::connectBrowserSettings(FileBrowserWidget *browser) {
+    if (browser == nullptr) {
+        return;
+    }
+
+    connect(browser, &FileBrowserWidget::openWithDefaultsChanged, this, &MainWindow::applyOpenWithDefaults, Qt::UniqueConnection);
 }
 
 void MainWindow::connectBrowserMetadata(FileBrowserWidget *browser) {

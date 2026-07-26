@@ -24,6 +24,7 @@ FileBrowserWidget *TabManager::addTab(const QString &path) {
     }
 
     auto *browser = new FileBrowserWidget(tabWidget_);
+    browser->setOpenWithDefaults(openWithDefaults_);
     const QString targetPath = QFileInfo(path).isDir() ? path : QDir::homePath();
     browser->setCurrentPath(targetPath);
 
@@ -43,6 +44,7 @@ FileBrowserWidget *TabManager::addTab(const QString &path) {
             tabWidget_->setCurrentWidget(newBrowser);
         }
     });
+    emit tabAdded(browser);
     return browser;
 }
 
@@ -77,6 +79,16 @@ void TabManager::restoreTabs(const AppSettings &settings) {
 
     if (!restoredAny) {
         addTab(QDir::homePath());
+    }
+}
+
+void TabManager::setOpenWithDefaults(const QHash<QString, QString> &defaults) {
+    openWithDefaults_ = defaults;
+    for (int i = 0; i < count(); ++i) {
+        FileBrowserWidget *browser = browserAt(i);
+        if (browser != nullptr) {
+            browser->setOpenWithDefaults(openWithDefaults_);
+        }
     }
 }
 

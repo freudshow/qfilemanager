@@ -4,6 +4,7 @@
 #include <QDesktopServices>
 #include <QDir>
 #include <QEvent>
+#include <QFileDialog>
 #include <QFileInfo>
 #include <QFileSystemModel>
 #include <QHBoxLayout>
@@ -13,6 +14,7 @@
 #include <QLineEdit>
 #include <QListView>
 #include <QMenu>
+#include <QProcess>
 #include <QShortcut>
 #include <QStackedWidget>
 #include <QTableView>
@@ -46,6 +48,10 @@ FileBrowserWidget::FileBrowserWidget(QWidget *parent)
     , listViewButton_(new QToolButton(this))
     , detailsViewButton_(new QToolButton(this))
     , tilesViewButton_(new QToolButton(this)) {
+    openWithLauncher_ = [](const QString &program, const QStringList &arguments) {
+        return QProcess::startDetached(program, arguments);
+    };
+
     setObjectName("fileBrowserWidget");
     addressBar_->setObjectName("addressBar");
     addressBar_->setPlaceholderText(tr("Enter a folder path"));
@@ -210,6 +216,25 @@ QTableView *FileBrowserWidget::view() const {
     return detailsView_;
 }
 
+void FileBrowserWidget::setOpenWithDefaults(const QHash<QString, QString> &defaults) {
+    openWithDefaults_.clear();
+    for (auto it = defaults.cbegin(); it != defaults.cend(); ++it) {
+        QString key = it.key().toLower();
+        if (!key.startsWith(QLatin1Char('.'))) {
+            key.prepend(QLatin1Char('.'));
+        }
+        openWithDefaults_.insert(key, it.value());
+    }
+}
+
+QHash<QString, QString> FileBrowserWidget::openWithDefaults() const {
+    return openWithDefaults_;
+}
+
+void FileBrowserWidget::setOpenWithLauncherForTests(OpenWithLauncher launcher) {
+    openWithLauncher_ = std::move(launcher);
+}
+
 void FileBrowserWidget::navigateFromAddressBar() {
     if (setCurrentPath(addressBar_->text())) {
         leaveAddressEditMode();
@@ -309,8 +334,47 @@ void FileBrowserWidget::openIndex(const QModelIndex &index) {
     }
 
     if (info.exists()) {
-        QDesktopServices::openUrl(QUrl::fromLocalFile(path));
+        openFilePath(path);
     }
+}
+
+QString FileBrowserWidget::extensionForPath(const QString &path) const {
+    const QString suffix = QFileInfo(path).suffix().toLower();
+    return suffix.isEmpty() ? QString() : QStringLiteral(".%1").arg(suffix);
+}
+
+bool FileBrowserWidget::openFilePath(const QString &path) {
+    const QString extension = extensionForPath(path);
+    const QString configuredApplication = openWithDefaults_.value(extension);
+    if (!configuredApplication.isEmpty()) {
+        if (launchConfiguredApplication(configuredApplication, path)) {
+            return true;
+        }
+    }
+
+    const bool opened = QDesktopServices::openUrl(QUrl::fromLocalFile(path));
+    if (!opened) {
+        emit errorOccurred(tr("Unable to open %1").arg(path));
+    }
+    return opened;
+}
+
+bool FileBrowserWidget::launchConfiguredApplication(const QString &applicationPath, const QString &filePath) {
+    if (!QFileInfo::exists(applicationPath)) {
+        emit errorOccurred(tr("Configured application is missing: %1").arg(applicationPath));
+        return false;
+    }
+
+    if (!openWithLauncher_) {
+        emit errorOccurred(tr("No launcher is configured for %1").arg(applicationPath));
+        return false;
+    }
+
+    if (!openWithLauncher_(applicationPath, {filePath})) {
+        emit errorOccurred(tr("Unable to launch %1").arg(applicationPath));
+        return false;
+    }
+    return true;
 }
 
 void FileBrowserWidget::emitSelectedPath(const QItemSelection &selected, const QItemSelection &) {
@@ -335,8 +399,16 @@ void FileBrowserWidget::showContextMenu(const QPoint &position) {
     QMenu menu(this);
     QAction *openAction = menu.addAction(tr("Open"));
     QAction *openInNewTabAction = menu.addAction(tr("Open in New Tab"));
+    QAction *openWithAction = menu.addAction(tr("Open With..."));
+    QAction *setDefaultAppAction = menu.addAction(tr("Set Default App for This Type..."));
+    QAction *clearDefaultAppAction = menu.addAction(tr("Clear Default App for This Type"));
+    const QString extension = extensionForPath(path);
+    const bool isFile = index.isValid() && info.isFile();
     openAction->setEnabled(index.isValid());
     openInNewTabAction->setEnabled(info.isDir());
+    openWithAction->setEnabled(isFile);
+    setDefaultAppAction->setEnabled(isFile && !extension.isEmpty());
+    clearDefaultAppAction->setEnabled(isFile && openWithDefaults_.contains(extension));
     menu.addSeparator();
     menu.addAction(tr("Copy"));
     menu.addAction(tr("Move"));
@@ -350,5 +422,21 @@ void FileBrowserWidget::showContextMenu(const QPoint &position) {
         openIndex(index);
     } else if (selectedAction == openInNewTabAction && info.isDir()) {
         emit openPathInNewTabRequested(path);
+    } else if (selectedAction == openWithAction && isFile) {
+        const QString applicationPath = QFileDialog::getOpenFileName(this, tr("Choose Application"));
+        if (!applicationPath.isEmpty()) {
+            launchConfiguredApplication(applicationPath, path);
+        }
+    } else if (selectedAction == setDefaultAppAction && isFile && !extension.isEmpty()) {
+        const QString applicationPath = QFileDialog::getOpenFileName(this, tr("Choose Default Application"));
+        if (!applicationPath.isEmpty()) {
+            openWithDefaults_.insert(extension, applicationPath);
+            emit openWithDefaultsChanged(openWithDefaults_);
+            launchConfiguredApplication(applicationPath, path);
+        }
+    } else if (selectedAction == clearDefaultAppAction && isFile) {
+        if (openWithDefaults_.remove(extension) > 0) {
+            emit openWithDefaultsChanged(openWithDefaults_);
+        }
     }
 }

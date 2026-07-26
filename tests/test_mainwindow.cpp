@@ -33,6 +33,7 @@ private slots:
     void addsCurrentFolderToFavoritesFromSidebarRequest();
     void tabStripNewTabButtonCreatesHomeTab();
     void metadataPanelUpdatesFromCurrentBrowserSelection();
+    void openWithDefaultsRestorePersistAndPropagateAcrossTabs();
 };
 
 namespace {
@@ -289,6 +290,50 @@ void MainWindowTest::metadataPanelUpdatesFromCurrentBrowserSelection() {
     QCOMPARE(metadataPanel->displayedValue("Name"), QString("selected.txt"));
     QCOMPARE(metadataPanel->displayedValue("Path"), filePath);
     QCOMPARE(metadataPanel->displayedValue("Size"), QString("8 B"));
+}
+
+void MainWindowTest::openWithDefaultsRestorePersistAndPropagateAcrossTabs() {
+    QTemporaryDir first;
+    QTemporaryDir second;
+    QVERIFY(first.isValid());
+    QVERIFY(second.isValid());
+
+    AppSettings settings;
+    settings.tabs.append({first.path(), {}, {}});
+    settings.tabs.append({second.path(), {}, {}});
+    settings.openWithDefaults.insert(QStringLiteral(".txt"), QStringLiteral("/usr/bin/editor"));
+
+    SettingsStore store;
+    QString error;
+    QVERIFY2(store.save(settings, &error), qPrintable(error));
+
+    MainWindow window;
+    auto *tabWidget = findTabWidget(window);
+    QVERIFY(tabWidget != nullptr);
+    QCOMPARE(tabWidget->count(), 2);
+
+    auto *firstBrowser = qobject_cast<FileBrowserWidget *>(tabWidget->widget(0));
+    auto *secondBrowser = qobject_cast<FileBrowserWidget *>(tabWidget->widget(1));
+    QVERIFY(firstBrowser != nullptr);
+    QVERIFY(secondBrowser != nullptr);
+    QCOMPARE(firstBrowser->openWithDefaults().value(QStringLiteral(".txt")), QString("/usr/bin/editor"));
+    QCOMPARE(secondBrowser->openWithDefaults().value(QStringLiteral(".txt")), QString("/usr/bin/editor"));
+
+    const QHash<QString, QString> updatedDefaults{{QStringLiteral(".png"), QStringLiteral("/usr/bin/viewer")}};
+    emit firstBrowser->openWithDefaultsChanged(updatedDefaults);
+
+    AppSettings loaded;
+    QVERIFY2(store.load(loaded, &error), qPrintable(error));
+    QCOMPARE(loaded.openWithDefaults.value(QStringLiteral(".png")), QString("/usr/bin/viewer"));
+    QVERIFY(!loaded.openWithDefaults.contains(QStringLiteral(".txt")));
+    QCOMPARE(secondBrowser->openWithDefaults().value(QStringLiteral(".png")), QString("/usr/bin/viewer"));
+
+    auto *newTabButton = window.findChild<QToolButton *>("newTabButton");
+    QVERIFY(newTabButton != nullptr);
+    QTest::mouseClick(newTabButton, Qt::LeftButton);
+    auto *newBrowser = qobject_cast<FileBrowserWidget *>(tabWidget->currentWidget());
+    QVERIFY(newBrowser != nullptr);
+    QCOMPARE(newBrowser->openWithDefaults().value(QStringLiteral(".png")), QString("/usr/bin/viewer"));
 }
 
 QTEST_MAIN(MainWindowTest)

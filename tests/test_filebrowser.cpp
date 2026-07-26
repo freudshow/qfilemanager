@@ -48,6 +48,8 @@ private slots:
     void addressBarUsesModernNavigationChrome();
     void doubleClickingFolderChangesCurrentPath();
     void doubleClickingFileOpensDesktopUrl();
+    void configuredDefaultAppOpensFileInsteadOfDesktopUrl();
+    void missingConfiguredDefaultFallsBackToDesktopUrl();
     void selectingEntryEmitsSelectedPath();
     void enablesDragAndDropFileOperations();
     void switchesBetweenDetailsListAndTilesViews();
@@ -214,6 +216,73 @@ void FileBrowserWidgetTest::doubleClickingFileOpensDesktopUrl() {
 
     QDesktopServices::unsetUrlHandler("file");
     QCOMPARE(browser.currentPath(), root.path());
+    QCOMPARE(handler.openedUrls.size(), 1);
+    QCOMPARE(handler.openedUrls.first(), QUrl::fromLocalFile(filePath));
+}
+
+void FileBrowserWidgetTest::configuredDefaultAppOpensFileInsteadOfDesktopUrl() {
+    QTemporaryDir root;
+    QVERIFY(root.isValid());
+    const QString filePath = QDir(root.path()).filePath("document.txt");
+    QFile file(filePath);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write("content");
+    file.close();
+
+    const QString appPath = QDir(root.path()).filePath("fake-editor");
+    QFile app(appPath);
+    QVERIFY(app.open(QIODevice::WriteOnly));
+    app.write("#!/bin/sh\n");
+    app.close();
+    QVERIFY(app.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner));
+
+    FileBrowserWidget browser;
+    browser.setOpenWithDefaults({{QStringLiteral(".txt"), appPath}});
+
+    QString launchedApp;
+    QString launchedFile;
+    browser.setOpenWithLauncherForTests([&](const QString &program, const QStringList &arguments) {
+        launchedApp = program;
+        launchedFile = arguments.value(0);
+        return true;
+    });
+
+    QVERIFY(browser.setCurrentPath(root.path()));
+    auto *model = qobject_cast<QFileSystemModel *>(browser.view()->model());
+    QVERIFY(model != nullptr);
+    const QModelIndex fileIndex = model->index(filePath);
+    QVERIFY(fileIndex.isValid());
+
+    QMetaObject::invokeMethod(browser.view(), "doubleClicked", Q_ARG(QModelIndex, fileIndex));
+
+    QCOMPARE(launchedApp, appPath);
+    QCOMPARE(launchedFile, filePath);
+}
+
+void FileBrowserWidgetTest::missingConfiguredDefaultFallsBackToDesktopUrl() {
+    QTemporaryDir root;
+    QVERIFY(root.isValid());
+    const QString filePath = QDir(root.path()).filePath("document.txt");
+    QFile file(filePath);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write("content");
+    file.close();
+
+    UrlOpenHandler handler;
+    QDesktopServices::setUrlHandler("file", &handler, "openUrl");
+
+    FileBrowserWidget browser;
+    browser.setOpenWithDefaults({{QStringLiteral(".txt"), QDir(root.path()).filePath("missing-editor")}});
+    QVERIFY(browser.setCurrentPath(root.path()));
+
+    auto *model = qobject_cast<QFileSystemModel *>(browser.view()->model());
+    QVERIFY(model != nullptr);
+    const QModelIndex fileIndex = model->index(filePath);
+    QVERIFY(fileIndex.isValid());
+
+    QMetaObject::invokeMethod(browser.view(), "doubleClicked", Q_ARG(QModelIndex, fileIndex));
+
+    QDesktopServices::unsetUrlHandler("file");
     QCOMPARE(handler.openedUrls.size(), 1);
     QCOMPARE(handler.openedUrls.first(), QUrl::fromLocalFile(filePath));
 }

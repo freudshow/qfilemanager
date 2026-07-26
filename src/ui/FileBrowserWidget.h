@@ -1,7 +1,10 @@
 #pragma once
 
+#include <QHash>
 #include <QStringList>
 #include <QWidget>
+
+#include <functional>
 
 class QEvent;
 class QFileSystemModel;
@@ -23,6 +26,8 @@ class FileBrowserWidget : public QWidget {
 public:
     explicit FileBrowserWidget(QWidget *parent = nullptr);
 
+    using OpenWithLauncher = std::function<bool(const QString &program, const QStringList &arguments)>;
+
     enum class ViewMode {
         Details,
         List,
@@ -40,11 +45,16 @@ public:
     QListView *listView() const;
     QListView *tilesView() const;
     QTableView *view() const;
+    void setOpenWithDefaults(const QHash<QString, QString> &defaults);
+    QHash<QString, QString> openWithDefaults() const;
+    void setOpenWithLauncherForTests(OpenWithLauncher launcher);
 
 signals:
     void pathChanged(const QString &path);
     void selectedPathChanged(const QString &path);
     void openPathInNewTabRequested(const QString &path);
+    void openWithDefaultsChanged(const QHash<QString, QString> &defaults);
+    void errorOccurred(const QString &message);
 
 private slots:
     void navigateFromAddressBar();
@@ -59,6 +69,9 @@ private:
     bool eventFilter(QObject *watched, QEvent *event) override;
     void rebuildBreadcrumbs();
     QStringList pathSegments(const QString &path) const;
+    QString extensionForPath(const QString &path) const;
+    bool openFilePath(const QString &path);
+    bool launchConfiguredApplication(const QString &applicationPath, const QString &filePath);
 
     QFileSystemModel *model_ = nullptr;
     QStackedWidget *viewStack_ = nullptr;
@@ -75,4 +88,6 @@ private:
     QToolButton *detailsViewButton_ = nullptr;
     QToolButton *tilesViewButton_ = nullptr;
     QString currentPath_;
+    QHash<QString, QString> openWithDefaults_;
+    OpenWithLauncher openWithLauncher_;
 };
