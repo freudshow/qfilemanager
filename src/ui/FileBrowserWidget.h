@@ -1,14 +1,18 @@
 #pragma once
 
+#include <QStringList>
 #include <QWidget>
 
+class QEvent;
 class QFileSystemModel;
 class QAbstractItemView;
+class QHBoxLayout;
 class QLineEdit;
 class QListView;
 class QModelIndex;
 class QItemSelection;
 class QPoint;
+class QShortcut;
 class QStackedWidget;
 class QTableView;
 class QToolButton;
@@ -28,6 +32,7 @@ public:
     QString currentPath() const;
     bool setCurrentPath(const QString &path);
     QLineEdit *addressBar() const;
+    QWidget *breadcrumbContainer() const;
     ViewMode viewMode() const;
     void setViewMode(ViewMode mode);
     QAbstractItemView *activeView() const;
@@ -44,11 +49,17 @@ signals:
 private slots:
     void navigateFromAddressBar();
     void navigateToParentDirectory();
+    void enterAddressEditMode();
+    void leaveAddressEditMode();
     void openIndex(const QModelIndex &index);
     void emitSelectedPath(const QItemSelection &selected, const QItemSelection &deselected);
     void showContextMenu(const QPoint &position);
 
 private:
+    bool eventFilter(QObject *watched, QEvent *event) override;
+    void rebuildBreadcrumbs();
+    QStringList pathSegments(const QString &path) const;
+
     QFileSystemModel *model_ = nullptr;
     QStackedWidget *viewStack_ = nullptr;
     QTableView *detailsView_ = nullptr;
@@ -56,6 +67,9 @@ private:
     QListView *tilesView_ = nullptr;
     ViewMode viewMode_ = ViewMode::Details;
     QLineEdit *addressBar_ = nullptr;
+    QWidget *breadcrumbContainer_ = nullptr;
+    QHBoxLayout *breadcrumbLayout_ = nullptr;
+    QShortcut *focusAddressShortcut_ = nullptr;
     QToolButton *upButton_ = nullptr;
     QToolButton *listViewButton_ = nullptr;
     QToolButton *detailsViewButton_ = nullptr;

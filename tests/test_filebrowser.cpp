@@ -6,7 +6,10 @@
 #include <QFileSystemModel>
 #include <QLineEdit>
 #include <QItemSelectionModel>
+#include <QLabel>
 #include <QListView>
+#include <QScrollArea>
+#include <QShortcut>
 #include <QSignalSpy>
 #include <QStandardPaths>
 #include <QStackedWidget>
@@ -48,6 +51,9 @@ private slots:
     void switchesBetweenDetailsListAndTilesViews();
     void viewModeSwitchPreservesCurrentPath();
     void viewModeButtonsChangeActiveView();
+    void showsBreadcrumbByDefaultAndPathEditorOnCtrlL();
+    void breadcrumbButtonNavigatesToAncestor();
+    void escapeLeavesPathEditModeWithoutNavigation();
 };
 
 void FileBrowserWidgetTest::defaultRestoreCreatesHomeTab() {
@@ -275,6 +281,67 @@ void FileBrowserWidgetTest::viewModeButtonsChangeActiveView() {
 
     QTest::mouseClick(detailsButton, Qt::LeftButton);
     QCOMPARE(browser.viewMode(), FileBrowserWidget::ViewMode::Details);
+}
+
+void FileBrowserWidgetTest::showsBreadcrumbByDefaultAndPathEditorOnCtrlL() {
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+
+    FileBrowserWidget browser;
+    browser.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&browser));
+    QVERIFY(browser.setCurrentPath(directory.path()));
+
+    QVERIFY(browser.breadcrumbContainer()->isVisible());
+    QVERIFY(!browser.addressBar()->isVisible());
+
+    QTest::keyClick(&browser, Qt::Key_L, Qt::ControlModifier);
+    QVERIFY(browser.addressBar()->isVisible());
+    QCOMPARE(browser.addressBar()->text(), directory.path());
+    QVERIFY(!browser.breadcrumbContainer()->isVisible());
+}
+
+void FileBrowserWidgetTest::breadcrumbButtonNavigatesToAncestor() {
+    QTemporaryDir root;
+    QVERIFY(root.isValid());
+    QVERIFY(QDir(root.path()).mkpath("parent/child"));
+    const QString parentPath = QDir(root.path()).filePath("parent");
+    const QString childPath = QDir(root.path()).filePath("parent/child");
+
+    FileBrowserWidget browser;
+    QVERIFY(browser.setCurrentPath(childPath));
+
+    QToolButton *parentButton = nullptr;
+    const auto buttons = browser.breadcrumbContainer()->findChildren<QToolButton *>();
+    for (QToolButton *button : buttons) {
+        if (button->property("path").toString() == parentPath) {
+            parentButton = button;
+            break;
+        }
+    }
+    QVERIFY(parentButton != nullptr);
+
+    QTest::mouseClick(parentButton, Qt::LeftButton);
+    QCOMPARE(browser.currentPath(), parentPath);
+}
+
+void FileBrowserWidgetTest::escapeLeavesPathEditModeWithoutNavigation() {
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString missing = QDir(directory.path()).filePath("missing");
+
+    FileBrowserWidget browser;
+    browser.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&browser));
+    QVERIFY(browser.setCurrentPath(directory.path()));
+
+    QTest::keyClick(&browser, Qt::Key_L, Qt::ControlModifier);
+    browser.addressBar()->setText(missing);
+    QTest::keyClick(browser.addressBar(), Qt::Key_Escape);
+
+    QCOMPARE(browser.currentPath(), directory.path());
+    QVERIFY(browser.breadcrumbContainer()->isVisible());
+    QVERIFY(!browser.addressBar()->isVisible());
 }
 
 QTEST_MAIN(FileBrowserWidgetTest)

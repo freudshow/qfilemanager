@@ -3,13 +3,17 @@
 #include <QAbstractItemView>
 #include <QDesktopServices>
 #include <QDir>
+#include <QEvent>
 #include <QFileInfo>
 #include <QFileSystemModel>
 #include <QHBoxLayout>
 #include <QItemSelectionModel>
+#include <QKeyEvent>
+#include <QLabel>
 #include <QLineEdit>
 #include <QListView>
 #include <QMenu>
+#include <QShortcut>
 #include <QStackedWidget>
 #include <QTableView>
 #include <QToolButton>
@@ -36,6 +40,8 @@ FileBrowserWidget::FileBrowserWidget(QWidget *parent)
     , listView_(new QListView(this))
     , tilesView_(new QListView(this))
     , addressBar_(new QLineEdit(this))
+    , breadcrumbContainer_(new QWidget(this))
+    , focusAddressShortcut_(new QShortcut(QKeySequence(QStringLiteral("Ctrl+L")), this))
     , upButton_(new QToolButton(this))
     , listViewButton_(new QToolButton(this))
     , detailsViewButton_(new QToolButton(this))
@@ -43,6 +49,10 @@ FileBrowserWidget::FileBrowserWidget(QWidget *parent)
     setObjectName("fileBrowserWidget");
     addressBar_->setObjectName("addressBar");
     addressBar_->setPlaceholderText(tr("Enter a folder path"));
+    breadcrumbContainer_->setObjectName("breadcrumbContainer");
+    breadcrumbLayout_ = new QHBoxLayout(breadcrumbContainer_);
+    breadcrumbLayout_->setContentsMargins(0, 0, 0, 0);
+    breadcrumbLayout_->setSpacing(4);
     upButton_->setObjectName("upButton");
     upButton_->setText(QStringLiteral("↑"));
     upButton_->setToolTip(tr("Go to parent folder"));
@@ -62,6 +72,9 @@ FileBrowserWidget::FileBrowserWidget(QWidget *parent)
     addressLayout->setContentsMargins(8, 6, 8, 6);
     addressLayout->setSpacing(8);
     addressLayout->addWidget(upButton_);
+    addressBar_->hide();
+    addressBar_->installEventFilter(this);
+    addressLayout->addWidget(breadcrumbContainer_, 1);
     addressLayout->addWidget(addressBar_, 1);
     addressLayout->addWidget(detailsViewButton_);
     addressLayout->addWidget(listViewButton_);
@@ -107,6 +120,7 @@ FileBrowserWidget::FileBrowserWidget(QWidget *parent)
     layout->addWidget(viewStack_, 1);
 
     connect(addressBar_, &QLineEdit::returnPressed, this, &FileBrowserWidget::navigateFromAddressBar);
+    connect(focusAddressShortcut_, &QShortcut::activated, this, &FileBrowserWidget::enterAddressEditMode);
     connect(upButton_, &QToolButton::clicked, this, &FileBrowserWidget::navigateToParentDirectory);
     connect(detailsViewButton_, &QToolButton::clicked, this, [this] { setViewMode(ViewMode::Details); });
     connect(listViewButton_, &QToolButton::clicked, this, [this] { setViewMode(ViewMode::List); });
@@ -144,12 +158,18 @@ bool FileBrowserWidget::setCurrentPath(const QString &path) {
     tilesView_->setRootIndex(rootIndex);
     currentPath_ = absolutePath;
     addressBar_->setText(currentPath_);
+    rebuildBreadcrumbs();
+    leaveAddressEditMode();
     emit pathChanged(currentPath_);
     return true;
 }
 
 QLineEdit *FileBrowserWidget::addressBar() const {
     return addressBar_;
+}
+
+QWidget *FileBrowserWidget::breadcrumbContainer() const {
+    return breadcrumbContainer_;
 }
 
 FileBrowserWidget::ViewMode FileBrowserWidget::viewMode() const {
@@ -191,7 +211,9 @@ QTableView *FileBrowserWidget::view() const {
 }
 
 void FileBrowserWidget::navigateFromAddressBar() {
-    setCurrentPath(addressBar_->text());
+    if (setCurrentPath(addressBar_->text())) {
+        leaveAddressEditMode();
+    }
 }
 
 void FileBrowserWidget::navigateToParentDirectory() {
@@ -199,6 +221,79 @@ void FileBrowserWidget::navigateToParentDirectory() {
     if (directory.cdUp()) {
         setCurrentPath(directory.absolutePath());
     }
+}
+
+void FileBrowserWidget::enterAddressEditMode() {
+    addressBar_->setText(currentPath_);
+    breadcrumbContainer_->hide();
+    addressBar_->show();
+    addressBar_->setFocus(Qt::ShortcutFocusReason);
+    addressBar_->selectAll();
+}
+
+void FileBrowserWidget::leaveAddressEditMode() {
+    addressBar_->setText(currentPath_);
+    addressBar_->hide();
+    breadcrumbContainer_->show();
+}
+
+bool FileBrowserWidget::eventFilter(QObject *watched, QEvent *event) {
+    if (watched == addressBar_ && event->type() == QEvent::KeyPress) {
+        auto *keyEvent = static_cast<QKeyEvent *>(event);
+        if (keyEvent->key() == Qt::Key_Escape) {
+            leaveAddressEditMode();
+            return true;
+        }
+    }
+    return QWidget::eventFilter(watched, event);
+}
+
+void FileBrowserWidget::rebuildBreadcrumbs() {
+    while (QLayoutItem *item = breadcrumbLayout_->takeAt(0)) {
+        delete item->widget();
+        delete item;
+    }
+
+    const QString cleanPath = QDir::cleanPath(currentPath_);
+    QStringList names;
+    QStringList paths;
+
+    QString path = cleanPath;
+    while (!path.isEmpty()) {
+        QFileInfo info(path);
+        const QString label = info.fileName().isEmpty() ? path : info.fileName();
+        names.prepend(label);
+        paths.prepend(path);
+        QDir parent(path);
+        if (!parent.cdUp()) {
+            break;
+        }
+        const QString parentPath = QDir::cleanPath(parent.absolutePath());
+        if (parentPath == path) {
+            break;
+        }
+        path = parentPath;
+    }
+
+    for (int i = 0; i < names.size(); ++i) {
+        auto *button = new QToolButton(breadcrumbContainer_);
+        button->setText(names.at(i));
+        button->setProperty("path", paths.at(i));
+        button->setAutoRaise(true);
+        connect(button, &QToolButton::clicked, this, [this, button] {
+            setCurrentPath(button->property("path").toString());
+        });
+        breadcrumbLayout_->addWidget(button);
+        if (i + 1 < names.size()) {
+            auto *separator = new QLabel(QStringLiteral(">"), breadcrumbContainer_);
+            breadcrumbLayout_->addWidget(separator);
+        }
+    }
+    breadcrumbLayout_->addStretch(1);
+}
+
+QStringList FileBrowserWidget::pathSegments(const QString &path) const {
+    return QDir::cleanPath(path).split(QDir::separator(), Qt::SkipEmptyParts);
 }
 
 void FileBrowserWidget::openIndex(const QModelIndex &index) {
