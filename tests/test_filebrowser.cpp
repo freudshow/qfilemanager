@@ -76,8 +76,11 @@ void FileBrowserWidgetTest::newTabButtonCreatesHomeTab() {
     strip.setTabManager(&manager);
     manager.restoreTabs(AppSettings{});
 
-    auto *button = strip.findChild<QToolButton *>("newTabButton");
+    const auto buttons = strip.findChildren<QToolButton *>("newTabButton");
+    QCOMPARE(buttons.size(), 1);
+    auto *button = buttons.constFirst();
     QVERIFY(button != nullptr);
+    QCOMPARE(manager.tabWidget()->cornerWidget(Qt::TopRightCorner), button);
 
     QTest::mouseClick(button, Qt::LeftButton);
 

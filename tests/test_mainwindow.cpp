@@ -37,10 +37,10 @@ private slots:
 
 namespace {
 
-void configureTestAppIdentity() {
+void configureTestAppIdentity(const char *testName) {
     QStandardPaths::setTestModeEnabled(true);
     QCoreApplication::setOrganizationName("FileManagerQt");
-    QCoreApplication::setApplicationName("FileManager");
+    QCoreApplication::setApplicationName(QStringLiteral("FileManager_%1").arg(QString::fromLatin1(testName)));
 }
 
 void removeTestSettings() {
@@ -80,7 +80,7 @@ MetadataPanel *findMetadataPanel(MainWindow &window) {
 } // namespace
 
 void MainWindowTest::init() {
-    configureTestAppIdentity();
+    configureTestAppIdentity(QTest::currentTestFunction());
     removeTestSettings();
 }
 
