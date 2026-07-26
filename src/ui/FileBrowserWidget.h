@@ -3,10 +3,13 @@
 #include <QWidget>
 
 class QFileSystemModel;
+class QAbstractItemView;
 class QLineEdit;
+class QListView;
 class QModelIndex;
 class QItemSelection;
 class QPoint;
+class QStackedWidget;
 class QTableView;
 class QToolButton;
 
@@ -16,9 +19,21 @@ class FileBrowserWidget : public QWidget {
 public:
     explicit FileBrowserWidget(QWidget *parent = nullptr);
 
+    enum class ViewMode {
+        Details,
+        List,
+        Tiles
+    };
+
     QString currentPath() const;
     bool setCurrentPath(const QString &path);
     QLineEdit *addressBar() const;
+    ViewMode viewMode() const;
+    void setViewMode(ViewMode mode);
+    QAbstractItemView *activeView() const;
+    QTableView *detailsView() const;
+    QListView *listView() const;
+    QListView *tilesView() const;
     QTableView *view() const;
 
 signals:
@@ -35,7 +50,11 @@ private slots:
 
 private:
     QFileSystemModel *model_ = nullptr;
-    QTableView *view_ = nullptr;
+    QStackedWidget *viewStack_ = nullptr;
+    QTableView *detailsView_ = nullptr;
+    QListView *listView_ = nullptr;
+    QListView *tilesView_ = nullptr;
+    ViewMode viewMode_ = ViewMode::Details;
     QLineEdit *addressBar_ = nullptr;
     QToolButton *upButton_ = nullptr;
     QString currentPath_;

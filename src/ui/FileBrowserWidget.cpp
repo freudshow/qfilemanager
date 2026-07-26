@@ -1,5 +1,6 @@
 #include "ui/FileBrowserWidget.h"
 
+#include <QAbstractItemView>
 #include <QDesktopServices>
 #include <QDir>
 #include <QFileInfo>
@@ -7,22 +8,38 @@
 #include <QHBoxLayout>
 #include <QItemSelectionModel>
 #include <QLineEdit>
+#include <QListView>
 #include <QMenu>
+#include <QStackedWidget>
 #include <QTableView>
 #include <QToolButton>
 #include <QUrl>
 #include <QVBoxLayout>
 
+namespace {
+
+void configureFileView(QAbstractItemView *view) {
+    view->setDragEnabled(true);
+    view->setAcceptDrops(true);
+    view->setDropIndicatorShown(true);
+    view->setDragDropMode(QAbstractItemView::DragDrop);
+    view->setContextMenuPolicy(Qt::CustomContextMenu);
+}
+
+}
+
 FileBrowserWidget::FileBrowserWidget(QWidget *parent)
     : QWidget(parent)
     , model_(new QFileSystemModel(this))
-    , view_(new QTableView(this))
+    , viewStack_(new QStackedWidget(this))
+    , detailsView_(new QTableView(this))
+    , listView_(new QListView(this))
+    , tilesView_(new QListView(this))
     , addressBar_(new QLineEdit(this))
     , upButton_(new QToolButton(this)) {
     setObjectName("fileBrowserWidget");
     addressBar_->setObjectName("addressBar");
     addressBar_->setPlaceholderText(tr("Enter a folder path"));
-    view_->setObjectName("fileBrowserView");
     upButton_->setObjectName("upButton");
     upButton_->setText(QStringLiteral("↑"));
     upButton_->setToolTip(tr("Go to parent folder"));
@@ -42,24 +59,46 @@ FileBrowserWidget::FileBrowserWidget(QWidget *parent)
 
     model_->setFilter(QDir::AllEntries | QDir::NoDotAndDotDot | QDir::AllDirs);
     model_->setRootPath(QDir::rootPath());
-    view_->setModel(model_);
-    view_->setSortingEnabled(true);
-    view_->setDragEnabled(true);
-    view_->setAcceptDrops(true);
-    view_->setDropIndicatorShown(true);
-    view_->setDragDropMode(QAbstractItemView::DragDrop);
-    view_->setContextMenuPolicy(Qt::CustomContextMenu);
+    detailsView_->setObjectName("fileBrowserDetailsView");
+    listView_->setObjectName("fileBrowserListView");
+    tilesView_->setObjectName("fileBrowserTilesView");
+
+    detailsView_->setModel(model_);
+    detailsView_->setSortingEnabled(true);
+    configureFileView(detailsView_);
+
+    listView_->setModel(model_);
+    listView_->setViewMode(QListView::ListMode);
+    listView_->setUniformItemSizes(true);
+    configureFileView(listView_);
+
+    tilesView_->setModel(model_);
+    tilesView_->setViewMode(QListView::IconMode);
+    tilesView_->setIconSize(QSize(48, 48));
+    tilesView_->setGridSize(QSize(140, 84));
+    tilesView_->setResizeMode(QListView::Adjust);
+    tilesView_->setWordWrap(true);
+    configureFileView(tilesView_);
+
+    viewStack_->addWidget(detailsView_);
+    viewStack_->addWidget(listView_);
+    viewStack_->addWidget(tilesView_);
 
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->addWidget(addressContainer);
-    layout->addWidget(view_, 1);
+    layout->addWidget(viewStack_, 1);
 
     connect(addressBar_, &QLineEdit::returnPressed, this, &FileBrowserWidget::navigateFromAddressBar);
     connect(upButton_, &QToolButton::clicked, this, &FileBrowserWidget::navigateToParentDirectory);
-    connect(view_, &QTableView::doubleClicked, this, &FileBrowserWidget::openIndex);
-    connect(view_->selectionModel(), &QItemSelectionModel::selectionChanged, this, &FileBrowserWidget::emitSelectedPath);
-    connect(view_, &QWidget::customContextMenuRequested, this, &FileBrowserWidget::showContextMenu);
+    const auto connectView = [this](QAbstractItemView *view) {
+        connect(view, &QAbstractItemView::doubleClicked, this, &FileBrowserWidget::openIndex);
+        connect(view->selectionModel(), &QItemSelectionModel::selectionChanged, this, &FileBrowserWidget::emitSelectedPath);
+        connect(view, &QWidget::customContextMenuRequested, this, &FileBrowserWidget::showContextMenu);
+    };
+    connectView(detailsView_);
+    connectView(listView_);
+    connectView(tilesView_);
 }
 
 QString FileBrowserWidget::currentPath() const {
@@ -80,7 +119,9 @@ bool FileBrowserWidget::setCurrentPath(const QString &path) {
     }
 
     const QModelIndex rootIndex = model_->setRootPath(absolutePath);
-    view_->setRootIndex(rootIndex);
+    detailsView_->setRootIndex(rootIndex);
+    listView_->setRootIndex(rootIndex);
+    tilesView_->setRootIndex(rootIndex);
     currentPath_ = absolutePath;
     addressBar_->setText(currentPath_);
     emit pathChanged(currentPath_);
@@ -91,8 +132,42 @@ QLineEdit *FileBrowserWidget::addressBar() const {
     return addressBar_;
 }
 
+FileBrowserWidget::ViewMode FileBrowserWidget::viewMode() const {
+    return viewMode_;
+}
+
+void FileBrowserWidget::setViewMode(ViewMode mode) {
+    viewMode_ = mode;
+    QAbstractItemView *target = detailsView_;
+    if (mode == ViewMode::List) {
+        target = listView_;
+    } else if (mode == ViewMode::Tiles) {
+        target = tilesView_;
+    }
+    viewStack_->setCurrentWidget(target);
+    if (!currentPath_.isEmpty()) {
+        target->setRootIndex(model_->index(currentPath_));
+    }
+}
+
+QAbstractItemView *FileBrowserWidget::activeView() const {
+    return qobject_cast<QAbstractItemView *>(viewStack_->currentWidget());
+}
+
+QTableView *FileBrowserWidget::detailsView() const {
+    return detailsView_;
+}
+
+QListView *FileBrowserWidget::listView() const {
+    return listView_;
+}
+
+QListView *FileBrowserWidget::tilesView() const {
+    return tilesView_;
+}
+
 QTableView *FileBrowserWidget::view() const {
-    return view_;
+    return detailsView_;
 }
 
 void FileBrowserWidget::navigateFromAddressBar() {
@@ -137,7 +212,8 @@ void FileBrowserWidget::emitSelectedPath(const QItemSelection &selected, const Q
 }
 
 void FileBrowserWidget::showContextMenu(const QPoint &position) {
-    const QModelIndex index = view_->indexAt(position);
+    QAbstractItemView *view = activeView();
+    const QModelIndex index = view->indexAt(position);
     const QString path = index.isValid() ? model_->filePath(index) : currentPath_;
     const QFileInfo info(path);
 
@@ -154,7 +230,7 @@ void FileBrowserWidget::showContextMenu(const QPoint &position) {
     menu.addSeparator();
     menu.addAction(tr("New Folder"));
     menu.addAction(tr("Properties"));
-    QAction *selectedAction = menu.exec(view_->viewport()->mapToGlobal(position));
+    QAction *selectedAction = menu.exec(view->viewport()->mapToGlobal(position));
     if (selectedAction == openAction && index.isValid()) {
         openIndex(index);
     } else if (selectedAction == openInNewTabAction && info.isDir()) {

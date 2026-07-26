@@ -6,8 +6,10 @@
 #include <QFileSystemModel>
 #include <QLineEdit>
 #include <QItemSelectionModel>
+#include <QListView>
 #include <QSignalSpy>
 #include <QStandardPaths>
+#include <QStackedWidget>
 #include <QTabWidget>
 #include <QTableView>
 #include <QTemporaryDir>
@@ -43,6 +45,8 @@ private slots:
     void doubleClickingFileOpensDesktopUrl();
     void selectingEntryEmitsSelectedPath();
     void enablesDragAndDropFileOperations();
+    void switchesBetweenDetailsListAndTilesViews();
+    void viewModeSwitchPreservesCurrentPath();
 };
 
 void FileBrowserWidgetTest::defaultRestoreCreatesHomeTab() {
@@ -217,6 +221,39 @@ void FileBrowserWidgetTest::enablesDragAndDropFileOperations() {
     QVERIFY(browser.view()->acceptDrops());
     QVERIFY(browser.view()->showDropIndicator());
     QCOMPARE(browser.view()->dragDropMode(), QAbstractItemView::DragDrop);
+}
+
+void FileBrowserWidgetTest::switchesBetweenDetailsListAndTilesViews() {
+    FileBrowserWidget browser;
+
+    QCOMPARE(browser.viewMode(), FileBrowserWidget::ViewMode::Details);
+    QVERIFY(browser.detailsView()->isVisible() || browser.detailsView()->parentWidget() != nullptr);
+
+    browser.setViewMode(FileBrowserWidget::ViewMode::List);
+    QCOMPARE(browser.viewMode(), FileBrowserWidget::ViewMode::List);
+    QCOMPARE(browser.activeView(), browser.listView());
+    QCOMPARE(browser.listView()->viewMode(), QListView::ListMode);
+
+    browser.setViewMode(FileBrowserWidget::ViewMode::Tiles);
+    QCOMPARE(browser.viewMode(), FileBrowserWidget::ViewMode::Tiles);
+    QCOMPARE(browser.activeView(), browser.tilesView());
+    QCOMPARE(browser.tilesView()->viewMode(), QListView::IconMode);
+}
+
+void FileBrowserWidgetTest::viewModeSwitchPreservesCurrentPath() {
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+
+    FileBrowserWidget browser;
+    QVERIFY(browser.setCurrentPath(directory.path()));
+
+    browser.setViewMode(FileBrowserWidget::ViewMode::Tiles);
+    QCOMPARE(browser.currentPath(), directory.path());
+    QVERIFY(browser.activeView()->rootIndex().isValid());
+
+    browser.setViewMode(FileBrowserWidget::ViewMode::Details);
+    QCOMPARE(browser.currentPath(), directory.path());
+    QVERIFY(browser.activeView()->rootIndex().isValid());
 }
 
 QTEST_MAIN(FileBrowserWidgetTest)
