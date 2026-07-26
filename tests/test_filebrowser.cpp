@@ -21,6 +21,7 @@
 
 #include "services/TabManager.h"
 #include "ui/FileBrowserWidget.h"
+#include "ui/TabStrip.h"
 
 class UrlOpenHandler : public QObject {
     Q_OBJECT
@@ -39,6 +40,7 @@ class FileBrowserWidgetTest : public QObject {
 
 private slots:
     void defaultRestoreCreatesHomeTab();
+    void newTabButtonCreatesHomeTab();
     void restoresSavedTabs();
     void setCurrentPathUpdatesViewAndEmits();
     void addressBarNavigatesToExistingDirectoryOnly();
@@ -66,6 +68,22 @@ void FileBrowserWidgetTest::defaultRestoreCreatesHomeTab() {
     QCOMPARE(manager.count(), 1);
     QCOMPARE(tabs.count(), 1);
     QCOMPARE(manager.browserAt(0)->currentPath(), QDir::homePath());
+}
+
+void FileBrowserWidgetTest::newTabButtonCreatesHomeTab() {
+    TabStrip strip;
+    TabManager manager;
+    strip.setTabManager(&manager);
+    manager.restoreTabs(AppSettings{});
+
+    auto *button = strip.findChild<QToolButton *>("newTabButton");
+    QVERIFY(button != nullptr);
+
+    QTest::mouseClick(button, Qt::LeftButton);
+
+    QCOMPARE(manager.count(), 2);
+    QCOMPARE(manager.browserAt(1)->currentPath(), QDir::homePath());
+    QCOMPARE(manager.tabWidget()->currentIndex(), 1);
 }
 
 void FileBrowserWidgetTest::restoresSavedTabs() {

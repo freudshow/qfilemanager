@@ -23,16 +23,17 @@ TabStrip::TabStrip(QWidget *parent)
     auto *headerLayout = new QHBoxLayout();
     auto *label = new QLabel(tr("Tabs and Files"), this);
     label->setObjectName("tabStripLabel");
-    newTabButton_->setObjectName("newTabButton");
-    newTabButton_->setText(QStringLiteral("+"));
-    newTabButton_->setToolTip(tr("New tab"));
     headerLayout->addWidget(label);
     headerLayout->addStretch(1);
-    headerLayout->addWidget(newTabButton_);
     layout->addLayout(headerLayout);
 
     tabWidget_->setObjectName("tabPlaceholder");
     tabWidget_->setTabsClosable(true);
+    newTabButton_->setObjectName("newTabButton");
+    newTabButton_->setText(QStringLiteral("+"));
+    newTabButton_->setToolTip(tr("New tab"));
+    newTabButton_->setAutoRaise(true);
+    tabWidget_->setCornerWidget(newTabButton_, Qt::TopRightCorner);
     layout->addWidget(tabWidget_, 1);
 
 }
