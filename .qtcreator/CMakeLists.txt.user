@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE QtCreatorProject>
-<!-- Written by QtCreator 20.0.0, 2026-07-25T15:31:11. -->
+<!-- Written by QtCreator 20.0.0, 2026-07-27T21:30:17. -->
 <qtcreator>
  <data>
   <variable>EnvironmentId</variable>
@@ -49,14 +49,7 @@
     <value type="bool" key="AutoTest.Framework.QtTest">true</value>
    </valuemap>
    <value type="bool" key="AutoTest.ApplyFilter">false</value>
-   <valuemap type="QVariantMap" key="AutoTest.CheckStates">
-    <value type="Qt::CheckState" key="1@/home/floyd/repo/qtproj/filemanager.qt/tests/test_mainwindow.cpp:cleanup">Unchecked</value>
-    <value type="Qt::CheckState" key="1@/home/floyd/repo/qtproj/filemanager.qt/tests/test_mainwindow.cpp:init">Unchecked</value>
-    <value type="Qt::CheckState" key="1@/home/floyd/repo/qtproj/filemanager.qt/tests/test_restore.cpp:cleanup">Unchecked</value>
-    <value type="Qt::CheckState" key="1@/home/floyd/repo/qtproj/filemanager.qt/tests/test_restore.cpp:init">Unchecked</value>
-    <value type="Qt::CheckState" key="1@/home/floyd/repo/qtproj/filemanager.qt/tests/test_settings_store.cpp:initTestCase">Unchecked</value>
-    <value type="Qt::CheckState" key="1@/home/floyd/repo/qtproj/filemanager.qt/tests/test_settings_store.cpp:malformedFieldValuesCreateBackupAndFallback_data">Unchecked</value>
-   </valuemap>
+   <valuemap type="QVariantMap" key="AutoTest.CheckStates"/>
    <valuelist type="QVariantList" key="AutoTest.PathFilters"/>
    <value type="int" key="AutoTest.RunAfterBuild">0</value>
    <value type="bool" key="AutoTest.UseGlobal">true</value>
