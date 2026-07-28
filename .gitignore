@@ -22,6 +22,7 @@ Testing/
 
 # Local editor and OS files
 .superpowers/
+.worktrees/
 prompt
 .DS_Store
 Thumbs.db
