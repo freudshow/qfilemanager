@@ -27,9 +27,11 @@ public:
 
     QString findRepositoryRoot(const QString &path) const;
     static bool isDirtyPorcelainOutput(const QString &output);
-    void run(const QString &repositoryRoot, const QStringList &arguments, CommandCallback callback) const;
+    void run(const QString &repositoryRoot, const QStringList &arguments, CommandCallback callback);
     void setCommandRunner(CommandRunner runner);
+    void setCommandTimeout(int timeoutMilliseconds);
 
 private:
     CommandRunner commandRunner_;
+    int commandTimeoutMilliseconds_ = 30000;
 };
