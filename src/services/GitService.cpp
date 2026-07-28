@@ -58,6 +58,9 @@ bool GitService::isDirtyPorcelainOutput(const QString &output) {
 void GitService::run(const QString &repositoryRoot, const QStringList &arguments, CommandCallback callback) {
     const auto delivered = std::make_shared<bool>(false);
     const auto complete = [this, callback = std::move(callback), delivered](const GitCommandResult &result) {
+        if (!callback) {
+            return;
+        }
         QMetaObject::invokeMethod(this, [callback, delivered, result] {
             if (*delivered) {
                 return;

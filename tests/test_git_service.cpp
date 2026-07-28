@@ -24,6 +24,8 @@ private slots:
     void runsInjectedCommandWithRepositoryAndArguments();
     void deliversInjectedRunnerCallbackOnlyOnce();
     void runsGitVersionAsynchronously();
+    void timesOutProductionGitCommandOnlyOnce();
+    void acceptsEmptyCallback();
 };
 
 namespace {
@@ -214,6 +216,45 @@ void GitServiceTest::runsGitVersionAsynchronously() {
     QTRY_VERIFY_WITH_TIMEOUT(called, 5000);
     QVERIFY2(result.succeeded(), qPrintable(result.startError + result.standardError));
     QVERIFY(result.standardOutput.contains(QStringLiteral("git version")));
+}
+
+void GitServiceTest::timesOutProductionGitCommandOnlyOnce() {
+    if (QStandardPaths::findExecutable(QStringLiteral("git")).isEmpty()) {
+        QSKIP("Git executable is unavailable.");
+    }
+
+    GitService service;
+    service.setCommandTimeout(50);
+    int callbackCount = 0;
+    GitCommandResult result;
+    service.run(QDir::currentPath(), {QStringLiteral("hash-object"), QStringLiteral("--stdin")}, [&](const GitCommandResult &commandResult) {
+        ++callbackCount;
+        result = commandResult;
+    });
+
+    QVERIFY(callbackCount == 0);
+    QTRY_COMPARE_WITH_TIMEOUT(callbackCount, 1, 5000);
+    QVERIFY(!result.succeeded());
+    QVERIFY(result.startError.contains(QStringLiteral("timed out"), Qt::CaseInsensitive));
+    QTest::qWait(1200);
+    QCOMPARE(callbackCount, 1);
+}
+
+void GitServiceTest::acceptsEmptyCallback() {
+    GitService service;
+    service.run({}, {}, {});
+
+    bool injected = false;
+    service.setCommandRunner([&](const QString &, const QStringList &, GitService::CommandCallback callback) {
+        injected = true;
+        callback({true, 0, {}, {}, {}});
+    });
+    service.run(QDir::currentPath(), {}, {});
+    QVERIFY(injected);
+
+    service.setCommandRunner({});
+    service.run(QDir::currentPath(), {QStringLiteral("--version")}, {});
+    QTest::qWait(100);
 }
 
 QTEST_MAIN(GitServiceTest)
