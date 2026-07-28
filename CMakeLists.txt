@@ -36,6 +36,8 @@ add_library(filemanager_ui STATIC
     src/services/PlatformServices.h
     src/services/SearchService.cpp
     src/services/SearchService.h
+    src/services/GitService.cpp
+    src/services/GitService.h
     src/ui/FileBrowserWidget.cpp
     src/ui/FileBrowserWidget.h
     src/ui/TabStrip.cpp

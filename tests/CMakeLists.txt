@@ -42,3 +42,7 @@ add_executable(filemanager_restore_test test_restore.cpp)
 target_link_libraries(filemanager_restore_test PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Test filemanager_ui)
 add_test(NAME RestoreTest COMMAND filemanager_restore_test)
 set_tests_properties(RestoreTest PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+add_executable(filemanager_git_service_test test_git_service.cpp)
+target_link_libraries(filemanager_git_service_test PRIVATE Qt6::Core Qt6::Test filemanager_ui)
+add_test(NAME GitServiceTest COMMAND filemanager_git_service_test)
