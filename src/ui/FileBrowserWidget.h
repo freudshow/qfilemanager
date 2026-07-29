@@ -12,6 +12,7 @@ class QAbstractItemView;
 class QHBoxLayout;
 class QLineEdit;
 class QListView;
+class QMenu;
 class QModelIndex;
 class QItemSelection;
 class QPoint;
@@ -61,6 +62,7 @@ signals:
     void openPathInNewTabRequested(const QString &path);
     void openWithDefaultsChanged(const QHash<QString, QString> &defaults);
     void errorOccurred(const QString &message);
+    void gitMenuRequested(QMenu *parentMenu, const QString &targetPath, bool backgroundTarget);
 
 private slots:
     void navigateFromAddressBar();

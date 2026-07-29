@@ -451,6 +451,8 @@ void FileBrowserWidget::showContextMenu(const QPoint &position) {
     menu.addSeparator();
     menu.addAction(tr("New Folder"));
     menu.addAction(tr("Properties"));
+    menu.addSeparator();
+    emit gitMenuRequested(&menu, path, !index.isValid());
     QAction *selectedAction = menu.exec(view->viewport()->mapToGlobal(position));
     if (selectedAction == openAction && index.isValid()) {
         openIndex(index);

@@ -8,6 +8,7 @@
 #include <QItemSelectionModel>
 #include <QLabel>
 #include <QListView>
+#include <QMenu>
 #include <QScrollArea>
 #include <QShortcut>
 #include <QSignalSpy>
@@ -16,6 +17,7 @@
 #include <QTabWidget>
 #include <QTableView>
 #include <QTemporaryDir>
+#include <QTimer>
 #include <QToolButton>
 #include <QUrl>
 
@@ -56,6 +58,8 @@ private slots:
     void configuredDefaultAppOpensFileInsteadOfDesktopUrl();
     void missingConfiguredDefaultFallsBackToDesktopUrl();
     void selectingEntryEmitsSelectedPath();
+    void gitMenuRequestedFromContextMenuCarriesTargetDetails_data();
+    void gitMenuRequestedFromContextMenuCarriesTargetDetails();
     void enablesDragAndDropFileOperations();
     void switchesBetweenDetailsListAndTilesViews();
     void viewModeSwitchPreservesCurrentPath();
@@ -442,6 +446,63 @@ void FileBrowserWidgetTest::selectingEntryEmitsSelectedPath() {
 
     QCOMPARE(selectedPathSpy.count(), 1);
     QCOMPARE(selectedPathSpy.takeFirst().at(0).toString(), filePath);
+}
+
+void FileBrowserWidgetTest::gitMenuRequestedFromContextMenuCarriesTargetDetails_data() {
+    QTest::addColumn<bool>("backgroundTarget");
+
+    QTest::newRow("file") << false;
+    QTest::newRow("background") << true;
+}
+
+void FileBrowserWidgetTest::gitMenuRequestedFromContextMenuCarriesTargetDetails() {
+    QFETCH(bool, backgroundTarget);
+
+    QTemporaryDir root;
+    QVERIFY(root.isValid());
+    const QString filePath = QDir(root.path()).filePath("document.txt");
+    QFile file(filePath);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.close();
+
+    FileBrowserWidget browser;
+    browser.resize(800, 600);
+    browser.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&browser));
+    QVERIFY(browser.setCurrentPath(root.path()));
+
+    auto *model = qobject_cast<QFileSystemModel *>(browser.view()->model());
+    QVERIFY(model != nullptr);
+    const QModelIndex fileIndex = model->index(filePath);
+    QVERIFY(fileIndex.isValid());
+    QTRY_VERIFY(browser.view()->visualRect(fileIndex).isValid());
+
+    const QPoint position = backgroundTarget
+        ? QPoint(browser.view()->viewport()->width() - 1, browser.view()->viewport()->height() - 1)
+        : browser.view()->visualRect(fileIndex).center();
+    QVERIFY(browser.view()->indexAt(position).isValid() != backgroundTarget);
+
+    QMenu *receivedMenu = nullptr;
+    QString receivedPath;
+    bool receivedBackgroundTarget = false;
+    bool separatorPrecedesHook = false;
+    connect(&browser, &FileBrowserWidget::gitMenuRequested, &browser,
+            [&](QMenu *parentMenu, const QString &targetPath, bool isBackgroundTarget) {
+                receivedMenu = parentMenu;
+                receivedPath = targetPath;
+                receivedBackgroundTarget = isBackgroundTarget;
+                const QList<QAction *> actions = parentMenu->actions();
+                separatorPrecedesHook = !actions.isEmpty() && actions.constLast()->isSeparator();
+                QTimer::singleShot(0, parentMenu, &QMenu::close);
+            });
+
+    QVERIFY(QMetaObject::invokeMethod(&browser, "showContextMenu", Qt::DirectConnection,
+                                      Q_ARG(QPoint, position)));
+
+    QVERIFY(receivedMenu != nullptr);
+    QCOMPARE(receivedPath, backgroundTarget ? root.path() : filePath);
+    QCOMPARE(receivedBackgroundTarget, backgroundTarget);
+    QVERIFY(separatorPrecedesHook);
 }
 
 void FileBrowserWidgetTest::enablesDragAndDropFileOperations() {
