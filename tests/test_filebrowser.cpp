@@ -43,6 +43,11 @@ private slots:
     void newTabButtonCreatesHomeTab();
     void restoresSavedTabs();
     void setCurrentPathUpdatesViewAndEmits();
+    void tracksBackAndForwardHistory();
+    void recordsOnlyDistinctSuccessfulNavigations();
+    void discardsForwardHistoryAfterNewNavigation();
+    void invalidNavigationDoesNotChangeHistory();
+    void failedHistoryNavigationPreservesHistoryIndex();
     void addressBarNavigatesToExistingDirectoryOnly();
     void upButtonNavigatesToParentDirectory();
     void addressBarUsesModernNavigationChrome();
@@ -128,6 +133,135 @@ void FileBrowserWidgetTest::setCurrentPathUpdatesViewAndEmits() {
     QTableView *view = browser.view();
     QVERIFY(view != nullptr);
     QVERIFY(browser.view()->rootIndex().isValid());
+}
+
+void FileBrowserWidgetTest::tracksBackAndForwardHistory() {
+    QTemporaryDir root;
+    QVERIFY(root.isValid());
+    QVERIFY(QDir(root.path()).mkpath("one/two"));
+    const QString onePath = QDir(root.path()).filePath("one");
+    const QString twoPath = QDir(onePath).filePath("two");
+
+    FileBrowserWidget browser;
+    QSignalSpy historyChangedSpy(&browser, &FileBrowserWidget::historyChanged);
+    QVERIFY(browser.setCurrentPath(root.path()));
+    QVERIFY(browser.setCurrentPath(onePath));
+    QVERIFY(browser.setCurrentPath(twoPath));
+    QVERIFY(browser.canGoBack());
+    QVERIFY(!browser.canGoForward());
+
+    QVERIFY(browser.goBack());
+    QCOMPARE(browser.currentPath(), onePath);
+    QVERIFY(browser.canGoBack());
+    QVERIFY(browser.canGoForward());
+
+    QVERIFY(browser.goBack());
+    QCOMPARE(browser.currentPath(), root.path());
+    QVERIFY(!browser.canGoBack());
+    QVERIFY(browser.canGoForward());
+
+    QVERIFY(browser.goForward());
+    QCOMPARE(browser.currentPath(), onePath);
+    QVERIFY(browser.canGoBack());
+    QVERIFY(browser.canGoForward());
+
+    QVERIFY(browser.goForward());
+    QCOMPARE(browser.currentPath(), twoPath);
+    QVERIFY(browser.canGoBack());
+    QVERIFY(!browser.canGoForward());
+    QVERIFY(!browser.goForward());
+    QCOMPARE(historyChangedSpy.count(), 7);
+    QCOMPARE(historyChangedSpy.at(0).at(0).toBool(), false);
+    QCOMPARE(historyChangedSpy.at(0).at(1).toBool(), false);
+    QCOMPARE(historyChangedSpy.at(2).at(0).toBool(), true);
+    QCOMPARE(historyChangedSpy.at(2).at(1).toBool(), false);
+    QCOMPARE(historyChangedSpy.at(3).at(0).toBool(), true);
+    QCOMPARE(historyChangedSpy.at(3).at(1).toBool(), true);
+    QCOMPARE(historyChangedSpy.at(4).at(0).toBool(), false);
+    QCOMPARE(historyChangedSpy.at(4).at(1).toBool(), true);
+}
+
+void FileBrowserWidgetTest::recordsOnlyDistinctSuccessfulNavigations() {
+    QTemporaryDir root;
+    QVERIFY(root.isValid());
+    QVERIFY(QDir(root.path()).mkdir("child"));
+    const QString childPath = QDir(root.path()).filePath("child");
+
+    FileBrowserWidget browser;
+    QSignalSpy historyChangedSpy(&browser, &FileBrowserWidget::historyChanged);
+    QVERIFY(browser.setCurrentPath(root.path()));
+    QVERIFY(browser.setCurrentPath(childPath));
+    QVERIFY(browser.setCurrentPath(childPath));
+
+    QCOMPARE(historyChangedSpy.count(), 2);
+    QVERIFY(browser.goBack());
+    QCOMPARE(browser.currentPath(), root.path());
+    QVERIFY(!browser.canGoBack());
+    QVERIFY(browser.canGoForward());
+}
+
+void FileBrowserWidgetTest::discardsForwardHistoryAfterNewNavigation() {
+    QTemporaryDir root;
+    QVERIFY(root.isValid());
+    QVERIFY(QDir(root.path()).mkpath("one/two"));
+    QVERIFY(QDir(root.path()).mkdir("three"));
+    const QString onePath = QDir(root.path()).filePath("one");
+    const QString twoPath = QDir(onePath).filePath("two");
+    const QString threePath = QDir(root.path()).filePath("three");
+
+    FileBrowserWidget browser;
+    QVERIFY(browser.setCurrentPath(root.path()));
+    QVERIFY(browser.setCurrentPath(onePath));
+    QVERIFY(browser.setCurrentPath(twoPath));
+    QVERIFY(browser.goBack());
+    QCOMPARE(browser.currentPath(), onePath);
+
+    QVERIFY(browser.setCurrentPath(threePath));
+    QCOMPARE(browser.currentPath(), threePath);
+    QVERIFY(browser.canGoBack());
+    QVERIFY(!browser.canGoForward());
+
+    QVERIFY(browser.goBack());
+    QCOMPARE(browser.currentPath(), onePath);
+    QVERIFY(browser.goForward());
+    QCOMPARE(browser.currentPath(), threePath);
+}
+
+void FileBrowserWidgetTest::invalidNavigationDoesNotChangeHistory() {
+    QTemporaryDir root;
+    QVERIFY(root.isValid());
+
+    FileBrowserWidget browser;
+    QVERIFY(browser.setCurrentPath(root.path()));
+    QVERIFY(!browser.canGoBack());
+    QVERIFY(!browser.canGoForward());
+
+    QVERIFY(!browser.setCurrentPath(QDir(root.path()).filePath("missing")));
+    QCOMPARE(browser.currentPath(), root.path());
+    QVERIFY(!browser.canGoBack());
+    QVERIFY(!browser.canGoForward());
+}
+
+void FileBrowserWidgetTest::failedHistoryNavigationPreservesHistoryIndex() {
+    QTemporaryDir root;
+    QVERIFY(root.isValid());
+    QVERIFY(QDir(root.path()).mkdir("one"));
+    QVERIFY(QDir(root.path()).mkdir("two"));
+    const QString onePath = QDir(root.path()).filePath("one");
+    const QString twoPath = QDir(root.path()).filePath("two");
+
+    FileBrowserWidget browser;
+    QVERIFY(browser.setCurrentPath(root.path()));
+    QVERIFY(browser.setCurrentPath(onePath));
+    QVERIFY(browser.setCurrentPath(twoPath));
+    QVERIFY(browser.goBack());
+    QCOMPARE(browser.currentPath(), onePath);
+
+    QVERIFY(QDir(twoPath).removeRecursively());
+    QVERIFY(!browser.goForward());
+    QCOMPARE(browser.currentPath(), onePath);
+    QVERIFY(browser.canGoBack());
+    QVERIFY(browser.canGoForward());
 }
 
 void FileBrowserWidgetTest::addressBarNavigatesToExistingDirectoryOnly() {

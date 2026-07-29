@@ -146,6 +146,46 @@ QString FileBrowserWidget::currentPath() const {
 }
 
 bool FileBrowserWidget::setCurrentPath(const QString &path) {
+    return applyPath(path, true);
+}
+
+bool FileBrowserWidget::canGoBack() const {
+    return historyIndex_ > 0;
+}
+
+bool FileBrowserWidget::canGoForward() const {
+    return historyIndex_ >= 0 && historyIndex_ + 1 < history_.size();
+}
+
+bool FileBrowserWidget::goBack() {
+    if (!canGoBack()) {
+        return false;
+    }
+
+    const int candidateIndex = historyIndex_ - 1;
+    if (!applyPath(history_.at(candidateIndex), false)) {
+        return false;
+    }
+    historyIndex_ = candidateIndex;
+    emit historyChanged(canGoBack(), canGoForward());
+    return true;
+}
+
+bool FileBrowserWidget::goForward() {
+    if (!canGoForward()) {
+        return false;
+    }
+
+    const int candidateIndex = historyIndex_ + 1;
+    if (!applyPath(history_.at(candidateIndex), false)) {
+        return false;
+    }
+    historyIndex_ = candidateIndex;
+    emit historyChanged(canGoBack(), canGoForward());
+    return true;
+}
+
+bool FileBrowserWidget::applyPath(const QString &path, bool recordHistory) {
     const QFileInfo info(path);
     if (!info.exists() || !info.isDir()) {
         addressBar_->setText(currentPath_);
@@ -166,8 +206,22 @@ bool FileBrowserWidget::setCurrentPath(const QString &path) {
     addressBar_->setText(currentPath_);
     rebuildBreadcrumbs();
     leaveAddressEditMode();
+    if (recordHistory) {
+        recordHistoryPath(currentPath_);
+    }
     emit pathChanged(currentPath_);
     return true;
+}
+
+void FileBrowserWidget::recordHistoryPath(const QString &path) {
+    if (historyIndex_ >= 0 && history_.value(historyIndex_) == path) {
+        return;
+    }
+
+    history_.remove(historyIndex_ + 1, history_.size() - historyIndex_ - 1);
+    history_.append(path);
+    historyIndex_ = history_.size() - 1;
+    emit historyChanged(canGoBack(), canGoForward());
 }
 
 QLineEdit *FileBrowserWidget::addressBar() const {
@@ -194,6 +248,7 @@ void FileBrowserWidget::setViewMode(ViewMode mode) {
     if (!currentPath_.isEmpty()) {
         target->setRootIndex(model_->index(currentPath_));
     }
+    emit viewModeChanged(viewMode_);
 }
 
 QAbstractItemView *FileBrowserWidget::activeView() const {

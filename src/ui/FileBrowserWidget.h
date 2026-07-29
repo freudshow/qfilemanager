@@ -36,6 +36,10 @@ public:
 
     QString currentPath() const;
     bool setCurrentPath(const QString &path);
+    bool canGoBack() const;
+    bool canGoForward() const;
+    bool goBack();
+    bool goForward();
     QLineEdit *addressBar() const;
     QWidget *breadcrumbContainer() const;
     ViewMode viewMode() const;
@@ -51,7 +55,9 @@ public:
 
 signals:
     void pathChanged(const QString &path);
+    void historyChanged(bool canGoBack, bool canGoForward);
     void selectedPathChanged(const QString &path);
+    void viewModeChanged(FileBrowserWidget::ViewMode mode);
     void openPathInNewTabRequested(const QString &path);
     void openWithDefaultsChanged(const QHash<QString, QString> &defaults);
     void errorOccurred(const QString &message);
@@ -67,6 +73,8 @@ private slots:
 
 private:
     bool eventFilter(QObject *watched, QEvent *event) override;
+    bool applyPath(const QString &path, bool recordHistory);
+    void recordHistoryPath(const QString &path);
     void rebuildBreadcrumbs();
     QStringList pathSegments(const QString &path) const;
     QString extensionForPath(const QString &path) const;
@@ -88,6 +96,8 @@ private:
     QToolButton *detailsViewButton_ = nullptr;
     QToolButton *tilesViewButton_ = nullptr;
     QString currentPath_;
+    QStringList history_;
+    int historyIndex_ = -1;
     QHash<QString, QString> openWithDefaults_;
     OpenWithLauncher openWithLauncher_;
 };
