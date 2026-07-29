@@ -4,14 +4,20 @@
 
 #include "services/SettingsStore.h"
 
+#include <functional>
+
 class QSplitter;
 class QToolBar;
 class QAction;
 class QActionGroup;
+class GitService;
+struct GitCommandResult;
+class QMenu;
 class TabManager;
 class FavoritesModel;
 class MetadataPanel;
 class FileBrowserWidget;
+class MainWindowTest;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -20,6 +26,10 @@ public:
     explicit MainWindow(QWidget *parent = nullptr);
 
 private:
+    using ConfirmationProvider = std::function<bool(const QString &title, const QString &message)>;
+    using BranchPicker = std::function<QString(const QStringList &branches, bool *accepted)>;
+    using ResultPresenter = std::function<void(const QString &title, const GitCommandResult &result, const QString &emptyMessage)>;
+
     void closeEvent(QCloseEvent *event) override;
     void navigateCurrentTabToFavorite(const QString &path);
     void addCurrentFolderToFavorites();
@@ -32,6 +42,14 @@ private:
     FileBrowserWidget *currentBrowser() const;
     void updateToolbar();
     void connectBrowserToolbar(FileBrowserWidget *browser);
+    void connectBrowserGitMenu(FileBrowserWidget *browser);
+    void populateGitMenu(QMenu *parentMenu, const QString &targetPath, bool backgroundTarget);
+    void refreshGitMenuTitle(QMenu *gitMenu, const QString &repositoryRoot);
+    void runGitAction(const QString &title, const QString &repositoryRoot, const QStringList &arguments, bool requiresConfirmation, QMenu *gitMenu);
+    void showGitOutput(const QString &title, const GitCommandResult &result, const QString &emptyMessage = QString());
+    void switchGitBranch(const QString &repositoryRoot, QMenu *gitMenu);
+
+    friend class MainWindowTest;
 
     TabManager *tabManager_ = nullptr;
     FavoritesModel *favoritesModel_ = nullptr;
@@ -44,4 +62,8 @@ private:
     QAction *listViewAction_ = nullptr;
     QAction *tilesViewAction_ = nullptr;
     QActionGroup *viewModeActionGroup_ = nullptr;
+    GitService *gitService_ = nullptr;
+    ConfirmationProvider confirmationProvider_;
+    BranchPicker branchPicker_;
+    ResultPresenter resultPresenter_;
 };

@@ -3,6 +3,7 @@
 #include "models/FileMetadata.h"
 #include "models/FavoritesModel.h"
 #include "services/SettingsStore.h"
+#include "services/GitService.h"
 #include "services/TabManager.h"
 #include "ui/FileBrowserWidget.h"
 #include "ui/FavoritesSidebar.h"
@@ -15,7 +16,13 @@
 #include <QCloseEvent>
 #include <QDir>
 #include <QFileInfo>
+#include <QInputDialog>
+#include <QMenu>
+#include <QMessageBox>
+#include <QPointer>
 #include <QSplitter>
+#include <QStyle>
+#include <QTextEdit>
 #include <QToolBar>
 #include <QVBoxLayout>
 #include <QWidget>
@@ -23,8 +30,10 @@
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
     , tabManager_(new TabManager(this))
-    , favoritesModel_(new FavoritesModel(this)) {
+    , favoritesModel_(new FavoritesModel(this))
+    , gitService_(new GitService(this)) {
     setWindowTitle("Qt File Manager");
+    gitService_->setObjectName("gitService");
 
     toolbar_ = addToolBar(tr("Browse"));
     toolbar_->setObjectName("mainToolbar");
@@ -96,6 +105,7 @@ MainWindow::MainWindow(QWidget *parent)
         connectBrowserSettings(browser);
         connectBrowserMetadata(browser);
         connectBrowserToolbar(browser);
+        connectBrowserGitMenu(browser);
         updateToolbar();
     });
 
@@ -112,6 +122,7 @@ MainWindow::MainWindow(QWidget *parent)
         connectBrowserSettings(tabManager_->browserAt(i));
         connectBrowserMetadata(tabManager_->browserAt(i));
         connectBrowserToolbar(tabManager_->browserAt(i));
+        connectBrowserGitMenu(tabManager_->browserAt(i));
     }
 
     connect(tabManager_->tabWidget(), &QTabWidget::currentChanged, this, [this](int) {
@@ -249,5 +260,199 @@ void MainWindow::connectBrowserToolbar(FileBrowserWidget *browser) {
     });
     connect(browser, &FileBrowserWidget::viewModeChanged, this, [this](FileBrowserWidget::ViewMode) {
         updateToolbar();
+    });
+}
+
+void MainWindow::connectBrowserGitMenu(FileBrowserWidget *browser) {
+    if (browser == nullptr) {
+        return;
+    }
+
+    connect(browser, &FileBrowserWidget::gitMenuRequested, this, &MainWindow::populateGitMenu, Qt::UniqueConnection);
+}
+
+void MainWindow::populateGitMenu(QMenu *parentMenu, const QString &targetPath, bool backgroundTarget) {
+    if (parentMenu == nullptr || gitService_ == nullptr) {
+        return;
+    }
+
+    const QString repositoryRoot = gitService_->findRepositoryRoot(targetPath);
+    if (repositoryRoot.isEmpty()) {
+        return;
+    }
+
+    auto *gitMenu = parentMenu->addMenu(tr("Git"));
+    gitMenu->setObjectName("gitContextMenu");
+    QAction *pullAction = gitMenu->addAction(tr("Pull"));
+    pullAction->setObjectName("gitPullAction");
+    QAction *pushAction = gitMenu->addAction(tr("Push"));
+    pushAction->setObjectName("gitPushAction");
+    gitMenu->addSeparator();
+    QAction *stashAction = gitMenu->addAction(tr("Stash"));
+    stashAction->setObjectName("gitStashAction");
+    QAction *stashPopAction = gitMenu->addAction(tr("Stash Pop"));
+    stashPopAction->setObjectName("gitStashPopAction");
+    gitMenu->addSeparator();
+    QAction *diffAction = gitMenu->addAction(tr("Diff"));
+    diffAction->setObjectName("gitDiffAction");
+    QAction *logAction = gitMenu->addAction(tr("Show Log"));
+    logAction->setObjectName("gitLogAction");
+    QAction *switchAction = gitMenu->addAction(tr("Switch Branch..."));
+    switchAction->setObjectName("gitSwitchBranchAction");
+    QAction *statusAction = gitMenu->addAction(tr("Status"));
+    statusAction->setObjectName("gitStatusAction");
+
+    const QFileInfo targetInfo(targetPath);
+    const QString relativeTarget = backgroundTarget ? QString() : QDir(repositoryRoot).relativeFilePath(targetInfo.absoluteFilePath());
+    const auto withPathspec = [relativeTarget](QStringList arguments) {
+        if (!relativeTarget.isEmpty() && relativeTarget != QStringLiteral(".")) {
+            arguments << QStringLiteral("--") << relativeTarget;
+        }
+        return arguments;
+    };
+
+    connect(pullAction, &QAction::triggered, this, [this, repositoryRoot, gitMenu] {
+        runGitAction(tr("Pull"), repositoryRoot, {QStringLiteral("pull")}, true, gitMenu);
+    });
+    connect(pushAction, &QAction::triggered, this, [this, repositoryRoot, gitMenu] {
+        runGitAction(tr("Push"), repositoryRoot, {QStringLiteral("push")}, true, gitMenu);
+    });
+    connect(stashAction, &QAction::triggered, this, [this, repositoryRoot, gitMenu] {
+        runGitAction(tr("Stash"), repositoryRoot, {QStringLiteral("stash"), QStringLiteral("push")}, true, gitMenu);
+    });
+    connect(stashPopAction, &QAction::triggered, this, [this, repositoryRoot, gitMenu] {
+        runGitAction(tr("Stash Pop"), repositoryRoot, {QStringLiteral("stash"), QStringLiteral("pop")}, true, gitMenu);
+    });
+    connect(diffAction, &QAction::triggered, this, [this, repositoryRoot, withPathspec, gitMenu] {
+        runGitAction(tr("Diff"), repositoryRoot, withPathspec({QStringLiteral("diff")}), false, gitMenu);
+    });
+    connect(logAction, &QAction::triggered, this, [this, repositoryRoot, withPathspec, gitMenu] {
+        runGitAction(tr("Show Log"), repositoryRoot,
+                     withPathspec({QStringLiteral("log"), QStringLiteral("--decorate"), QStringLiteral("--oneline"), QStringLiteral("-n"), QStringLiteral("100")}), false, gitMenu);
+    });
+    connect(switchAction, &QAction::triggered, this, [this, repositoryRoot, gitMenu] {
+        switchGitBranch(repositoryRoot, gitMenu);
+    });
+    connect(statusAction, &QAction::triggered, this, [this, repositoryRoot, gitMenu] {
+        runGitAction(tr("Status"), repositoryRoot, {QStringLiteral("status"), QStringLiteral("--short"), QStringLiteral("--branch")}, false, gitMenu);
+    });
+    connect(gitMenu, &QMenu::aboutToShow, this, [this, gitMenu, repositoryRoot] {
+        refreshGitMenuTitle(gitMenu, repositoryRoot);
+    });
+}
+
+void MainWindow::refreshGitMenuTitle(QMenu *gitMenu, const QString &repositoryRoot) {
+    if (gitService_ == nullptr) {
+        return;
+    }
+
+    QPointer<QMenu> menu = gitMenu;
+    gitService_->run(repositoryRoot, {QStringLiteral("status"), QStringLiteral("--porcelain")}, [this, menu](const GitCommandResult &result) {
+        if (menu == nullptr || !result.succeeded()) {
+            return;
+        }
+
+        const bool dirty = GitService::isDirtyPorcelainOutput(result.standardOutput);
+        menu->setTitle(dirty ? tr("Git (modified)") : tr("Git"));
+        menu->setIcon(dirty ? style()->standardIcon(QStyle::SP_MessageBoxWarning) : QIcon());
+    });
+}
+
+void MainWindow::runGitAction(const QString &title, const QString &repositoryRoot, const QStringList &arguments, bool requiresConfirmation, QMenu *gitMenu) {
+    if (gitService_ == nullptr) {
+        return;
+    }
+
+    if (requiresConfirmation) {
+        const QString message = tr("Run git %1 in %2? This may change files, repository state, or a remote.")
+                                    .arg(arguments.join(QLatin1Char(' ')), repositoryRoot);
+        const bool accepted = confirmationProvider_ ? confirmationProvider_(title, message)
+                                                     : QMessageBox::question(this, title, message) == QMessageBox::Yes;
+        if (!accepted) {
+            return;
+        }
+    }
+
+    QPointer<QMenu> menu = gitMenu;
+    gitService_->run(repositoryRoot, arguments, [this, title, repositoryRoot, menu](const GitCommandResult &result) {
+        const QString emptyMessage = title == tr("Diff") ? tr("No differences.")
+            : title == tr("Show Log") ? tr("No commits found.") : QString();
+        if (resultPresenter_) {
+            resultPresenter_(title, result, emptyMessage);
+        } else {
+            showGitOutput(title, result, emptyMessage);
+        }
+        if (menu != nullptr) {
+            refreshGitMenuTitle(menu, repositoryRoot);
+        }
+    });
+}
+
+void MainWindow::showGitOutput(const QString &title, const GitCommandResult &result, const QString &emptyMessage) {
+    if (!result.succeeded()) {
+        const QString details = !result.startError.isEmpty() ? result.startError : result.standardError;
+        QMessageBox::critical(this, title, tr("Git command failed.\n%1").arg(details.isEmpty() ? tr("No error output was returned.") : details));
+        return;
+    }
+
+    QString output = result.standardOutput;
+    if (output.trimmed().isEmpty() && !emptyMessage.isEmpty()) {
+        output = emptyMessage;
+    }
+    auto *dialog = new QDialog(this);
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    dialog->setWindowTitle(title);
+    auto *layout = new QVBoxLayout(dialog);
+    auto *text = new QTextEdit(dialog);
+    text->setReadOnly(true);
+    text->setPlainText(output);
+    layout->addWidget(text);
+    dialog->resize(720, 480);
+    dialog->show();
+}
+
+void MainWindow::switchGitBranch(const QString &repositoryRoot, QMenu *gitMenu) {
+    if (gitService_ == nullptr) {
+        return;
+    }
+
+    QPointer<QMenu> menu = gitMenu;
+    gitService_->run(repositoryRoot, {QStringLiteral("branch"), QStringLiteral("--format=%(refname:short)")}, [this, repositoryRoot, menu](const GitCommandResult &result) {
+        if (!result.succeeded()) {
+            if (resultPresenter_) {
+                resultPresenter_(tr("Switch Branch"), result, {});
+            } else {
+                showGitOutput(tr("Switch Branch"), result);
+            }
+            if (menu != nullptr) {
+                refreshGitMenuTitle(menu, repositoryRoot);
+            }
+            return;
+        }
+
+        const QStringList branches = result.standardOutput.split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+        bool accepted = false;
+        const QString branch = (branchPicker_ ? branchPicker_(branches, &accepted)
+                                               : QInputDialog::getItem(this, tr("Switch Branch"), tr("Local branch:"), branches, 0, true, &accepted)).trimmed();
+        if (!accepted || branch.isEmpty()) {
+            if (menu != nullptr) {
+                refreshGitMenuTitle(menu, repositoryRoot);
+            }
+            return;
+        }
+        if (branch.startsWith(QLatin1Char('-'))) {
+            GitCommandResult invalidBranch;
+            invalidBranch.startError = tr("Branch names cannot begin with '-'.");
+            if (resultPresenter_) {
+                resultPresenter_(tr("Switch Branch"), invalidBranch, {});
+            } else {
+                showGitOutput(tr("Switch Branch"), invalidBranch);
+            }
+            if (menu != nullptr) {
+                refreshGitMenuTitle(menu, repositoryRoot);
+            }
+            return;
+        }
+        runGitAction(tr("Switch Branch"), repositoryRoot, {QStringLiteral("switch"), branch}, true, menu);
     });
 }

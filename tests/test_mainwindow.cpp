@@ -5,6 +5,7 @@
 #include <QFile>
 #include <QFileSystemModel>
 #include <QItemSelectionModel>
+#include <QMenu>
 #include <QSplitter>
 #include <QStandardPaths>
 #include <QTabWidget>
@@ -16,6 +17,7 @@
 
 #include "MainWindow.h"
 #include "models/FavoritesModel.h"
+#include "services/GitService.h"
 #include "services/SettingsStore.h"
 #include "ui/FavoritesSidebar.h"
 #include "ui/FileBrowserWidget.h"
@@ -38,6 +40,13 @@ private slots:
     void openWithDefaultsRestorePersistAndPropagateAcrossTabs();
     void toolbarControlsActiveTabAndSynchronizesHistory();
     void toolbarViewActionsSynchronizeWithActiveTab();
+    void addsGitSubmenuOnlyForRepositoryTargets();
+    void gitMenuShowsDirtyStateAndUsesTargetPathspec();
+    void gitMenuActionsUseSafeArgumentsAndCancelledCommandsDoNotRun();
+    void gitBranchListingFailurePreventsSwitchAndPresentsError();
+    void gitBranchPickerRejectsOptionLikeInputAndSwitchesValidBranch();
+    void gitActionCompletionRefreshesKnownMenuDirtyState();
+    void gitActionResultsUseOutputAndErrorPresentation();
 };
 
 namespace {
@@ -413,6 +422,308 @@ void MainWindowTest::toolbarViewActionsSynchronizeWithActiveTab() {
     tabWidget->setCurrentWidget(browser);
     QCOMPARE(browser->viewMode(), FileBrowserWidget::ViewMode::Tiles);
     QVERIFY(tiles->isChecked());
+}
+
+void MainWindowTest::addsGitSubmenuOnlyForRepositoryTargets() {
+    QTemporaryDir repository;
+    QTemporaryDir outside;
+    QVERIFY(repository.isValid());
+    QVERIFY(outside.isValid());
+    QVERIFY(QDir(repository.path()).mkdir(".git"));
+
+    MainWindow window;
+    auto *browser = qobject_cast<FileBrowserWidget *>(findTabWidget(window)->currentWidget());
+    QVERIFY(browser != nullptr);
+
+    QMenu repositoryMenu;
+    emit browser->gitMenuRequested(&repositoryMenu, repository.path(), true);
+    const auto gitMenus = repositoryMenu.findChildren<QMenu *>();
+    QCOMPARE(gitMenus.size(), 1);
+    auto *gitMenu = gitMenus.constFirst();
+    QCOMPARE(gitMenu->title(), QString("Git"));
+    QCOMPARE(gitMenu->actions().size(), 10);
+    QCOMPARE(gitMenu->actions().at(0)->text(), QString("Pull"));
+    QCOMPARE(gitMenu->actions().at(1)->text(), QString("Push"));
+    QCOMPARE(gitMenu->actions().at(3)->text(), QString("Stash"));
+    QCOMPARE(gitMenu->actions().at(4)->text(), QString("Stash Pop"));
+    QCOMPARE(gitMenu->actions().at(6)->text(), QString("Diff"));
+    QCOMPARE(gitMenu->actions().at(7)->text(), QString("Show Log"));
+    QCOMPARE(gitMenu->actions().at(8)->text(), QString("Switch Branch..."));
+    QCOMPARE(gitMenu->actions().at(9)->text(), QString("Status"));
+
+    QMenu outsideMenu;
+    emit browser->gitMenuRequested(&outsideMenu, outside.path(), true);
+    QVERIFY(outsideMenu.findChildren<QMenu *>().isEmpty());
+}
+
+void MainWindowTest::gitMenuShowsDirtyStateAndUsesTargetPathspec() {
+    QTemporaryDir root;
+    QVERIFY(root.isValid());
+    QVERIFY(QDir(root.path()).mkdir(".git"));
+    QVERIFY(QDir(root.path()).mkpath("src"));
+    const QString filePath = QDir(root.path()).filePath("src/main.cpp");
+    QFile file(filePath);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.close();
+
+    MainWindow window;
+    auto *service = window.findChild<GitService *>("gitService");
+    QVERIFY(service != nullptr);
+    QStringList capturedArguments;
+    service->setCommandRunner([&capturedArguments](const QString &, const QStringList &arguments, GitService::CommandCallback callback) {
+        capturedArguments = arguments;
+        if (arguments == QStringList({QStringLiteral("status"), QStringLiteral("--porcelain")})) {
+            callback({true, 0, QStringLiteral(" M src/main.cpp\n"), {}, {}});
+            return;
+        }
+        callback({true, 0, {}, {}, {}});
+    });
+
+    auto *browser = qobject_cast<FileBrowserWidget *>(findTabWidget(window)->currentWidget());
+    QVERIFY(browser != nullptr);
+    QMenu menu;
+    emit browser->gitMenuRequested(&menu, filePath, false);
+    auto *gitMenu = menu.findChild<QMenu *>("gitContextMenu");
+    QVERIFY(gitMenu != nullptr);
+    emit gitMenu->aboutToShow();
+    QTRY_COMPARE(gitMenu->title(), QString("Git (modified)"));
+    QVERIFY(!gitMenu->icon().isNull());
+
+    auto *diffAction = gitMenu->findChild<QAction *>("gitDiffAction");
+    QVERIFY(diffAction != nullptr);
+    diffAction->trigger();
+    QTRY_COMPARE(capturedArguments, QStringList({QStringLiteral("diff"), QStringLiteral("--"), QStringLiteral("src/main.cpp")}));
+
+    QMenu backgroundMenu;
+    emit browser->gitMenuRequested(&backgroundMenu, root.path(), true);
+    auto *backgroundGitMenu = backgroundMenu.findChild<QMenu *>("gitContextMenu");
+    QVERIFY(backgroundGitMenu != nullptr);
+    auto *backgroundDiffAction = backgroundGitMenu->findChild<QAction *>("gitDiffAction");
+    QVERIFY(backgroundDiffAction != nullptr);
+    backgroundDiffAction->trigger();
+    QTRY_COMPARE(capturedArguments, QStringList({QStringLiteral("diff")}));
+}
+
+void MainWindowTest::gitMenuActionsUseSafeArgumentsAndCancelledCommandsDoNotRun() {
+    QTemporaryDir root;
+    QVERIFY(root.isValid());
+    QVERIFY(QDir(root.path()).mkdir(".git"));
+    const QString filePath = QDir(root.path()).filePath("tracked.txt");
+    QFile file(filePath);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.close();
+
+    MainWindow window;
+    window.confirmationProvider_ = [](const QString &, const QString &) { return false; };
+    window.branchPicker_ = [](const QStringList &, bool *accepted) {
+        *accepted = true;
+        return QStringLiteral("topic");
+    };
+    QStringList arguments;
+    QList<QStringList> calls;
+    window.resultPresenter_ = [](const QString &, const GitCommandResult &, const QString &) {};
+    auto *service = window.findChild<GitService *>("gitService");
+    QVERIFY(service != nullptr);
+    service->setCommandRunner([&](const QString &, const QStringList &commandArguments, GitService::CommandCallback callback) {
+        calls.append(commandArguments);
+        arguments = commandArguments;
+        if (commandArguments == QStringList({QStringLiteral("branch"), QStringLiteral("--format=%(refname:short)")})) {
+            callback({true, 0, QStringLiteral("main\ntopic\n"), {}, {}});
+            return;
+        }
+        callback({true, 0, QStringLiteral("output"), {}, {}});
+    });
+
+    auto *browser = qobject_cast<FileBrowserWidget *>(findTabWidget(window)->currentWidget());
+    QVERIFY(browser != nullptr);
+    QMenu menu;
+    emit browser->gitMenuRequested(&menu, filePath, false);
+    auto *gitMenu = menu.findChild<QMenu *>("gitContextMenu");
+    QVERIFY(gitMenu != nullptr);
+
+    const QList<QPair<QString, QString>> actions{{"gitPullAction", "Pull"}, {"gitPushAction", "Push"},
+        {"gitStashAction", "Stash"}, {"gitStashPopAction", "Stash Pop"}, {"gitDiffAction", "Diff"},
+        {"gitLogAction", "Show Log"}, {"gitSwitchBranchAction", "Switch Branch..."}, {"gitStatusAction", "Status"}};
+    for (const auto &[objectName, text] : actions) {
+        auto *action = gitMenu->findChild<QAction *>(objectName);
+        QVERIFY2(action != nullptr, qPrintable(objectName));
+        QCOMPARE(action->text(), text);
+    }
+
+    gitMenu->findChild<QAction *>("gitPullAction")->trigger();
+    gitMenu->findChild<QAction *>("gitPushAction")->trigger();
+    gitMenu->findChild<QAction *>("gitStashAction")->trigger();
+    gitMenu->findChild<QAction *>("gitStashPopAction")->trigger();
+    QTRY_COMPARE(calls.size(), 0);
+
+    gitMenu->findChild<QAction *>("gitDiffAction")->trigger();
+    QTRY_COMPARE(arguments, QStringList({QStringLiteral("diff"), QStringLiteral("--"), QStringLiteral("tracked.txt")}));
+    gitMenu->findChild<QAction *>("gitLogAction")->trigger();
+    QTRY_COMPARE(arguments, QStringList({QStringLiteral("log"), QStringLiteral("--decorate"), QStringLiteral("--oneline"), QStringLiteral("-n"), QStringLiteral("100"), QStringLiteral("--"), QStringLiteral("tracked.txt")}));
+    gitMenu->findChild<QAction *>("gitStatusAction")->trigger();
+    QTRY_COMPARE(arguments, QStringList({QStringLiteral("status"), QStringLiteral("--short"), QStringLiteral("--branch")}));
+
+    gitMenu->findChild<QAction *>("gitSwitchBranchAction")->trigger();
+    QTRY_VERIFY(calls.contains(QStringList({QStringLiteral("branch"), QStringLiteral("--format=%(refname:short)")})));
+    QVERIFY(!calls.contains(QStringList({QStringLiteral("switch"), QStringLiteral("topic")})));
+}
+
+void MainWindowTest::gitBranchListingFailurePreventsSwitchAndPresentsError() {
+    QTemporaryDir root;
+    QVERIFY(root.isValid());
+    QVERIFY(QDir(root.path()).mkdir(".git"));
+
+    MainWindow window;
+    QStringList presentedTitles;
+    window.resultPresenter_ = [&presentedTitles](const QString &title, const GitCommandResult &, const QString &) {
+        presentedTitles.append(title);
+    };
+    auto *service = window.findChild<GitService *>("gitService");
+    QVERIFY(service != nullptr);
+    QList<QStringList> calls;
+    service->setCommandRunner([&calls](const QString &, const QStringList &arguments, GitService::CommandCallback callback) {
+        calls.append(arguments);
+        if (arguments == QStringList({QStringLiteral("branch"), QStringLiteral("--format=%(refname:short)")})) {
+            callback({true, 1, {}, QStringLiteral("branch failed"), {}});
+            return;
+        }
+        callback({true, 0, {}, {}, {}});
+    });
+
+    auto *browser = qobject_cast<FileBrowserWidget *>(findTabWidget(window)->currentWidget());
+    QVERIFY(browser != nullptr);
+    QMenu menu;
+    emit browser->gitMenuRequested(&menu, root.path(), true);
+    auto *gitMenu = menu.findChild<QMenu *>("gitContextMenu");
+    QVERIFY(gitMenu != nullptr);
+    gitMenu->findChild<QAction *>("gitSwitchBranchAction")->trigger();
+
+    QTRY_COMPARE(presentedTitles, QStringList({QStringLiteral("Switch Branch")}));
+    QVERIFY(!calls.contains(QStringList({QStringLiteral("switch"), QStringLiteral("main")})));
+}
+
+void MainWindowTest::gitBranchPickerRejectsOptionLikeInputAndSwitchesValidBranch() {
+    QTemporaryDir root;
+    QVERIFY(root.isValid());
+    QVERIFY(QDir(root.path()).mkdir(".git"));
+
+    MainWindow window;
+    QStringList presentedTitles;
+    window.resultPresenter_ = [&presentedTitles](const QString &title, const GitCommandResult &, const QString &) {
+        presentedTitles.append(title);
+    };
+    QString selectedBranch = QStringLiteral("--detach");
+    window.branchPicker_ = [&selectedBranch](const QStringList &, bool *accepted) {
+        *accepted = true;
+        return selectedBranch;
+    };
+    window.confirmationProvider_ = [](const QString &, const QString &) { return true; };
+    auto *service = window.findChild<GitService *>("gitService");
+    QVERIFY(service != nullptr);
+    QList<QStringList> calls;
+    service->setCommandRunner([&calls](const QString &, const QStringList &arguments, GitService::CommandCallback callback) {
+        calls.append(arguments);
+        if (arguments == QStringList({QStringLiteral("branch"), QStringLiteral("--format=%(refname:short)")})) {
+            callback({true, 0, QStringLiteral("main\ntopic\n"), {}, {}});
+            return;
+        }
+        callback({true, 0, {}, {}, {}});
+    });
+
+    auto *browser = qobject_cast<FileBrowserWidget *>(findTabWidget(window)->currentWidget());
+    QVERIFY(browser != nullptr);
+    QMenu menu;
+    emit browser->gitMenuRequested(&menu, root.path(), true);
+    auto *gitMenu = menu.findChild<QMenu *>("gitContextMenu");
+    QVERIFY(gitMenu != nullptr);
+
+    gitMenu->findChild<QAction *>("gitSwitchBranchAction")->trigger();
+    QTRY_COMPARE(presentedTitles, QStringList({QStringLiteral("Switch Branch")}));
+    QVERIFY(!calls.contains(QStringList({QStringLiteral("switch"), QStringLiteral("--detach")})));
+
+    const int callsBeforeValidBranch = calls.size();
+
+    selectedBranch = QStringLiteral("topic");
+    gitMenu->findChild<QAction *>("gitSwitchBranchAction")->trigger();
+    QTRY_VERIFY(calls.mid(callsBeforeValidBranch).contains(QStringList({QStringLiteral("switch"), QStringLiteral("topic")})));
+}
+
+void MainWindowTest::gitActionCompletionRefreshesKnownMenuDirtyState() {
+    QTemporaryDir root;
+    QVERIFY(root.isValid());
+    QVERIFY(QDir(root.path()).mkdir(".git"));
+
+    MainWindow window;
+    window.resultPresenter_ = [](const QString &, const GitCommandResult &, const QString &) {};
+    auto *service = window.findChild<GitService *>("gitService");
+    QVERIFY(service != nullptr);
+    int porcelainRuns = 0;
+    service->setCommandRunner([&porcelainRuns](const QString &, const QStringList &arguments, GitService::CommandCallback callback) {
+        if (arguments == QStringList({QStringLiteral("status"), QStringLiteral("--porcelain")})) {
+            ++porcelainRuns;
+            callback({true, 0, porcelainRuns == 1 ? QString() : QStringLiteral(" M changed.txt\n"), {}, {}});
+            return;
+        }
+        callback({true, 0, QStringLiteral("diff output"), {}, {}});
+    });
+
+    auto *browser = qobject_cast<FileBrowserWidget *>(findTabWidget(window)->currentWidget());
+    QVERIFY(browser != nullptr);
+    QMenu menu;
+    emit browser->gitMenuRequested(&menu, root.path(), true);
+    auto *gitMenu = menu.findChild<QMenu *>("gitContextMenu");
+    QVERIFY(gitMenu != nullptr);
+    emit gitMenu->aboutToShow();
+    QTRY_COMPARE(gitMenu->title(), QStringLiteral("Git"));
+
+    gitMenu->findChild<QAction *>("gitDiffAction")->trigger();
+    QTRY_COMPARE(porcelainRuns, 2);
+    QTRY_COMPARE(gitMenu->title(), QStringLiteral("Git (modified)"));
+}
+
+void MainWindowTest::gitActionResultsUseOutputAndErrorPresentation() {
+    QTemporaryDir root;
+    QVERIFY(root.isValid());
+    QVERIFY(QDir(root.path()).mkdir(".git"));
+
+    MainWindow window;
+    struct PresentedResult {
+        QString title;
+        GitCommandResult result;
+        QString emptyMessage;
+    };
+    QList<PresentedResult> presented;
+    window.resultPresenter_ = [&presented](const QString &title, const GitCommandResult &result, const QString &emptyMessage) {
+        presented.append({title, result, emptyMessage});
+    };
+    auto *service = window.findChild<GitService *>("gitService");
+    QVERIFY(service != nullptr);
+    service->setCommandRunner([](const QString &, const QStringList &arguments, GitService::CommandCallback callback) {
+        if (arguments == QStringList({QStringLiteral("status"), QStringLiteral("--short"), QStringLiteral("--branch")})) {
+            callback({true, 1, {}, QStringLiteral("status failed"), {}});
+            return;
+        }
+        callback({true, 0, {}, {}, {}});
+    });
+
+    auto *browser = qobject_cast<FileBrowserWidget *>(findTabWidget(window)->currentWidget());
+    QVERIFY(browser != nullptr);
+    QMenu menu;
+    emit browser->gitMenuRequested(&menu, root.path(), true);
+    auto *gitMenu = menu.findChild<QMenu *>("gitContextMenu");
+    QVERIFY(gitMenu != nullptr);
+
+    gitMenu->findChild<QAction *>("gitDiffAction")->trigger();
+    QTRY_COMPARE(presented.size(), 1);
+    QCOMPARE(presented.at(0).title, QStringLiteral("Diff"));
+    QVERIFY(presented.at(0).result.succeeded());
+    QCOMPARE(presented.at(0).emptyMessage, QStringLiteral("No differences."));
+
+    gitMenu->findChild<QAction *>("gitStatusAction")->trigger();
+    QTRY_COMPARE(presented.size(), 2);
+    QCOMPARE(presented.at(1).title, QStringLiteral("Status"));
+    QVERIFY(!presented.at(1).result.succeeded());
+    QCOMPARE(presented.at(1).result.standardError, QStringLiteral("status failed"));
 }
 
 QTEST_MAIN(MainWindowTest)
