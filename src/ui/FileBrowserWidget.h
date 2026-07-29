@@ -92,9 +92,6 @@ private:
     QHBoxLayout *breadcrumbLayout_ = nullptr;
     QShortcut *focusAddressShortcut_ = nullptr;
     QToolButton *upButton_ = nullptr;
-    QToolButton *listViewButton_ = nullptr;
-    QToolButton *detailsViewButton_ = nullptr;
-    QToolButton *tilesViewButton_ = nullptr;
     QString currentPath_;
     QStringList history_;
     int historyIndex_ = -1;

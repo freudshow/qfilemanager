@@ -44,10 +44,7 @@ FileBrowserWidget::FileBrowserWidget(QWidget *parent)
     , addressBar_(new QLineEdit(this))
     , breadcrumbContainer_(new QWidget(this))
     , focusAddressShortcut_(new QShortcut(QKeySequence(QStringLiteral("Ctrl+L")), this))
-    , upButton_(new QToolButton(this))
-    , listViewButton_(new QToolButton(this))
-    , detailsViewButton_(new QToolButton(this))
-    , tilesViewButton_(new QToolButton(this)) {
+    , upButton_(new QToolButton(this)) {
     openWithLauncher_ = [](const QString &program, const QStringList &arguments) {
         return QProcess::startDetached(program, arguments);
     };
@@ -62,16 +59,6 @@ FileBrowserWidget::FileBrowserWidget(QWidget *parent)
     upButton_->setObjectName("upButton");
     upButton_->setText(QStringLiteral("↑"));
     upButton_->setToolTip(tr("Go to parent folder"));
-    listViewButton_->setObjectName("listViewButton");
-    listViewButton_->setText(tr("List"));
-    listViewButton_->setToolTip(tr("List view"));
-    detailsViewButton_->setObjectName("detailsViewButton");
-    detailsViewButton_->setText(tr("Details"));
-    detailsViewButton_->setToolTip(tr("Details view"));
-    tilesViewButton_->setObjectName("tilesViewButton");
-    tilesViewButton_->setText(tr("Tiles"));
-    tilesViewButton_->setToolTip(tr("Tiles view"));
-
     auto *addressContainer = new QWidget(this);
     addressContainer->setObjectName("addressBarContainer");
     auto *addressLayout = new QHBoxLayout(addressContainer);
@@ -82,16 +69,11 @@ FileBrowserWidget::FileBrowserWidget(QWidget *parent)
     addressBar_->installEventFilter(this);
     addressLayout->addWidget(breadcrumbContainer_, 1);
     addressLayout->addWidget(addressBar_, 1);
-    addressLayout->addWidget(detailsViewButton_);
-    addressLayout->addWidget(listViewButton_);
-    addressLayout->addWidget(tilesViewButton_);
     addressContainer->setStyleSheet(QStringLiteral(
         "QWidget#addressBarContainer { background: #f6f8fb; border: 1px solid #d7dee8; border-radius: 10px; }"
         "QLineEdit#addressBar { background: white; border: 1px solid #c8d2df; border-radius: 8px; padding: 6px 10px; }"
         "QToolButton#upButton { background: #ffffff; border: 1px solid #c8d2df; border-radius: 8px; padding: 5px 10px; }"
-        "QToolButton#upButton:hover { background: #eaf1f8; }"
-        "QToolButton#listViewButton, QToolButton#detailsViewButton, QToolButton#tilesViewButton { background: #ffffff; border: 1px solid #c8d2df; border-radius: 8px; padding: 5px 10px; }"
-        "QToolButton#listViewButton:hover, QToolButton#detailsViewButton:hover, QToolButton#tilesViewButton:hover { background: #eaf1f8; }"));
+        "QToolButton#upButton:hover { background: #eaf1f8; }"));
 
     model_->setFilter(QDir::AllEntries | QDir::NoDotAndDotDot | QDir::AllDirs);
     model_->setRootPath(QDir::rootPath());
@@ -128,9 +110,6 @@ FileBrowserWidget::FileBrowserWidget(QWidget *parent)
     connect(addressBar_, &QLineEdit::returnPressed, this, &FileBrowserWidget::navigateFromAddressBar);
     connect(focusAddressShortcut_, &QShortcut::activated, this, &FileBrowserWidget::enterAddressEditMode);
     connect(upButton_, &QToolButton::clicked, this, &FileBrowserWidget::navigateToParentDirectory);
-    connect(detailsViewButton_, &QToolButton::clicked, this, [this] { setViewMode(ViewMode::Details); });
-    connect(listViewButton_, &QToolButton::clicked, this, [this] { setViewMode(ViewMode::List); });
-    connect(tilesViewButton_, &QToolButton::clicked, this, [this] { setViewMode(ViewMode::Tiles); });
     const auto connectView = [this](QAbstractItemView *view) {
         connect(view, &QAbstractItemView::doubleClicked, this, &FileBrowserWidget::openIndex);
         connect(view->selectionModel(), &QItemSelectionModel::selectionChanged, this, &FileBrowserWidget::emitSelectedPath);

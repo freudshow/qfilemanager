@@ -59,7 +59,6 @@ private slots:
     void enablesDragAndDropFileOperations();
     void switchesBetweenDetailsListAndTilesViews();
     void viewModeSwitchPreservesCurrentPath();
-    void viewModeButtonsChangeActiveView();
     void showsBreadcrumbByDefaultAndPathEditorOnCtrlL();
     void breadcrumbButtonNavigatesToAncestor();
     void escapeLeavesPathEditModeWithoutNavigation();
@@ -485,26 +484,6 @@ void FileBrowserWidgetTest::viewModeSwitchPreservesCurrentPath() {
     browser.setViewMode(FileBrowserWidget::ViewMode::Details);
     QCOMPARE(browser.currentPath(), directory.path());
     QVERIFY(browser.activeView()->rootIndex().isValid());
-}
-
-void FileBrowserWidgetTest::viewModeButtonsChangeActiveView() {
-    FileBrowserWidget browser;
-
-    auto *listButton = browser.findChild<QToolButton *>("listViewButton");
-    auto *detailsButton = browser.findChild<QToolButton *>("detailsViewButton");
-    auto *tilesButton = browser.findChild<QToolButton *>("tilesViewButton");
-    QVERIFY(listButton != nullptr);
-    QVERIFY(detailsButton != nullptr);
-    QVERIFY(tilesButton != nullptr);
-
-    QTest::mouseClick(listButton, Qt::LeftButton);
-    QCOMPARE(browser.viewMode(), FileBrowserWidget::ViewMode::List);
-
-    QTest::mouseClick(tilesButton, Qt::LeftButton);
-    QCOMPARE(browser.viewMode(), FileBrowserWidget::ViewMode::Tiles);
-
-    QTest::mouseClick(detailsButton, Qt::LeftButton);
-    QCOMPARE(browser.viewMode(), FileBrowserWidget::ViewMode::Details);
 }
 
 void FileBrowserWidgetTest::showsBreadcrumbByDefaultAndPathEditorOnCtrlL() {

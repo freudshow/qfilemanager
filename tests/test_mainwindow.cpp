@@ -1,5 +1,6 @@
 #include <QtTest/QtTest>
 
+#include <QAction>
 #include <QDir>
 #include <QFile>
 #include <QFileSystemModel>
@@ -9,6 +10,7 @@
 #include <QTabWidget>
 #include <QTableView>
 #include <QTemporaryDir>
+#include <QToolBar>
 #include <QToolButton>
 #include <QWidget>
 
@@ -34,6 +36,8 @@ private slots:
     void tabStripNewTabButtonCreatesHomeTab();
     void metadataPanelUpdatesFromCurrentBrowserSelection();
     void openWithDefaultsRestorePersistAndPropagateAcrossTabs();
+    void toolbarControlsActiveTabAndSynchronizesHistory();
+    void toolbarViewActionsSynchronizeWithActiveTab();
 };
 
 namespace {
@@ -334,6 +338,81 @@ void MainWindowTest::openWithDefaultsRestorePersistAndPropagateAcrossTabs() {
     auto *newBrowser = qobject_cast<FileBrowserWidget *>(tabWidget->currentWidget());
     QVERIFY(newBrowser != nullptr);
     QCOMPARE(newBrowser->openWithDefaults().value(QStringLiteral(".png")), QString("/usr/bin/viewer"));
+}
+
+void MainWindowTest::toolbarControlsActiveTabAndSynchronizesHistory() {
+    QTemporaryDir first;
+    QTemporaryDir second;
+    QVERIFY(first.isValid());
+    QVERIFY(second.isValid());
+    QVERIFY(QDir(first.path()).mkdir("child"));
+
+    AppSettings settings;
+    settings.tabs.append({first.path(), {}, {}});
+    settings.tabs.append({second.path(), {}, {}});
+    SettingsStore store;
+    QString error;
+    QVERIFY2(store.save(settings, &error), qPrintable(error));
+
+    MainWindow window;
+    auto *tabWidget = findTabWidget(window);
+    QVERIFY(tabWidget != nullptr);
+    auto *back = window.findChild<QAction *>("backAction");
+    auto *forward = window.findChild<QAction *>("forwardAction");
+    QVERIFY(back != nullptr);
+    QVERIFY(forward != nullptr);
+
+    auto *firstBrowser = qobject_cast<FileBrowserWidget *>(tabWidget->widget(0));
+    QVERIFY(firstBrowser != nullptr);
+    QVERIFY(firstBrowser->setCurrentPath(QDir(first.path()).filePath("child")));
+    QVERIFY(back->isEnabled());
+
+    tabWidget->setCurrentIndex(1);
+    QVERIFY(!back->isEnabled());
+    QVERIFY(!forward->isEnabled());
+
+    tabWidget->setCurrentIndex(0);
+    QVERIFY(back->isEnabled());
+    back->trigger();
+    QCOMPARE(firstBrowser->currentPath(), first.path());
+}
+
+void MainWindowTest::toolbarViewActionsSynchronizeWithActiveTab() {
+    MainWindow window;
+    auto *tabWidget = findTabWidget(window);
+    QVERIFY(tabWidget != nullptr);
+    auto *toolbar = window.findChild<QToolBar *>("mainToolbar");
+    QVERIFY(toolbar != nullptr);
+    QVERIFY(!toolbar->isMovable());
+    auto *details = window.findChild<QAction *>("detailsViewAction");
+    auto *list = window.findChild<QAction *>("listViewAction");
+    auto *tiles = window.findChild<QAction *>("tilesViewAction");
+    QVERIFY(details != nullptr);
+    QVERIFY(list != nullptr);
+    QVERIFY(tiles != nullptr);
+
+    auto *browser = qobject_cast<FileBrowserWidget *>(tabWidget->currentWidget());
+    QVERIFY(browser != nullptr);
+    list->trigger();
+    QCOMPARE(browser->viewMode(), FileBrowserWidget::ViewMode::List);
+    QVERIFY(list->isChecked());
+
+    tiles->trigger();
+    QCOMPARE(browser->viewMode(), FileBrowserWidget::ViewMode::Tiles);
+    QVERIFY(tiles->isChecked());
+
+    auto *newTabButton = window.findChild<QToolButton *>("newTabButton");
+    QVERIFY(newTabButton != nullptr);
+    QTest::mouseClick(newTabButton, Qt::LeftButton);
+    auto *newBrowser = qobject_cast<FileBrowserWidget *>(tabWidget->currentWidget());
+    QVERIFY(newBrowser != nullptr);
+    QVERIFY(newBrowser != browser);
+    QCOMPARE(newBrowser->viewMode(), FileBrowserWidget::ViewMode::Details);
+    QVERIFY(details->isChecked());
+
+    tabWidget->setCurrentWidget(browser);
+    QCOMPARE(browser->viewMode(), FileBrowserWidget::ViewMode::Tiles);
+    QVERIFY(tiles->isChecked());
 }
 
 QTEST_MAIN(MainWindowTest)

@@ -10,10 +10,13 @@
 #include "ui/TabStrip.h"
 
 #include <QTabWidget>
+#include <QAction>
+#include <QActionGroup>
 #include <QCloseEvent>
 #include <QDir>
 #include <QFileInfo>
 #include <QSplitter>
+#include <QToolBar>
 #include <QVBoxLayout>
 #include <QWidget>
 
@@ -22,6 +25,57 @@ MainWindow::MainWindow(QWidget *parent)
     , tabManager_(new TabManager(this))
     , favoritesModel_(new FavoritesModel(this)) {
     setWindowTitle("Qt File Manager");
+
+    toolbar_ = addToolBar(tr("Browse"));
+    toolbar_->setObjectName("mainToolbar");
+    toolbar_->setMovable(false);
+
+    backAction_ = toolbar_->addAction(tr("Back"));
+    backAction_->setObjectName("backAction");
+    backAction_->setToolTip(tr("Go back in this tab"));
+    forwardAction_ = toolbar_->addAction(tr("Forward"));
+    forwardAction_->setObjectName("forwardAction");
+    forwardAction_->setToolTip(tr("Go forward in this tab"));
+    toolbar_->addSeparator();
+
+    viewModeActionGroup_ = new QActionGroup(this);
+    viewModeActionGroup_->setExclusive(true);
+    detailsViewAction_ = toolbar_->addAction(tr("Details"));
+    detailsViewAction_->setObjectName("detailsViewAction");
+    listViewAction_ = toolbar_->addAction(tr("List"));
+    listViewAction_->setObjectName("listViewAction");
+    tilesViewAction_ = toolbar_->addAction(tr("Tiles"));
+    tilesViewAction_->setObjectName("tilesViewAction");
+    for (QAction *action : {detailsViewAction_, listViewAction_, tilesViewAction_}) {
+        action->setCheckable(true);
+        viewModeActionGroup_->addAction(action);
+    }
+
+    connect(backAction_, &QAction::triggered, this, [this] {
+        if (FileBrowserWidget *browser = currentBrowser()) {
+            browser->goBack();
+        }
+    });
+    connect(forwardAction_, &QAction::triggered, this, [this] {
+        if (FileBrowserWidget *browser = currentBrowser()) {
+            browser->goForward();
+        }
+    });
+    connect(detailsViewAction_, &QAction::triggered, this, [this] {
+        if (FileBrowserWidget *browser = currentBrowser()) {
+            browser->setViewMode(FileBrowserWidget::ViewMode::Details);
+        }
+    });
+    connect(listViewAction_, &QAction::triggered, this, [this] {
+        if (FileBrowserWidget *browser = currentBrowser()) {
+            browser->setViewMode(FileBrowserWidget::ViewMode::List);
+        }
+    });
+    connect(tilesViewAction_, &QAction::triggered, this, [this] {
+        if (FileBrowserWidget *browser = currentBrowser()) {
+            browser->setViewMode(FileBrowserWidget::ViewMode::Tiles);
+        }
+    });
 
     auto *workspace = new QWidget(this);
     auto *layout = new QVBoxLayout(workspace);
@@ -41,6 +95,8 @@ MainWindow::MainWindow(QWidget *parent)
     connect(tabManager_, &TabManager::tabAdded, this, [this](FileBrowserWidget *browser) {
         connectBrowserSettings(browser);
         connectBrowserMetadata(browser);
+        connectBrowserToolbar(browser);
+        updateToolbar();
     });
 
     auto *favoritesSidebar = new FavoritesSidebar(splitter_);
@@ -55,7 +111,13 @@ MainWindow::MainWindow(QWidget *parent)
     for (int i = 0; i < tabManager_->count(); ++i) {
         connectBrowserSettings(tabManager_->browserAt(i));
         connectBrowserMetadata(tabManager_->browserAt(i));
+        connectBrowserToolbar(tabManager_->browserAt(i));
     }
+
+    connect(tabManager_->tabWidget(), &QTabWidget::currentChanged, this, [this](int) {
+        updateToolbar();
+    });
+    updateToolbar();
 
     splitter_->addWidget(favoritesSidebar);
     splitter_->addWidget(tabStrip);
@@ -155,5 +217,37 @@ void MainWindow::connectBrowserMetadata(FileBrowserWidget *browser) {
             return;
         }
         metadataPanel_->setMetadata(FileMetadata::fromPath(path));
+    });
+}
+
+FileBrowserWidget *MainWindow::currentBrowser() const {
+    return tabManager_ == nullptr || tabManager_->tabWidget() == nullptr
+        ? nullptr
+        : qobject_cast<FileBrowserWidget *>(tabManager_->tabWidget()->currentWidget());
+}
+
+void MainWindow::updateToolbar() {
+    FileBrowserWidget *browser = currentBrowser();
+    const bool available = browser != nullptr;
+    backAction_->setEnabled(available && browser->canGoBack());
+    forwardAction_->setEnabled(available && browser->canGoForward());
+    detailsViewAction_->setEnabled(available);
+    listViewAction_->setEnabled(available);
+    tilesViewAction_->setEnabled(available);
+    detailsViewAction_->setChecked(available && browser->viewMode() == FileBrowserWidget::ViewMode::Details);
+    listViewAction_->setChecked(available && browser->viewMode() == FileBrowserWidget::ViewMode::List);
+    tilesViewAction_->setChecked(available && browser->viewMode() == FileBrowserWidget::ViewMode::Tiles);
+}
+
+void MainWindow::connectBrowserToolbar(FileBrowserWidget *browser) {
+    if (browser == nullptr) {
+        return;
+    }
+
+    connect(browser, &FileBrowserWidget::historyChanged, this, [this](bool, bool) {
+        updateToolbar();
+    });
+    connect(browser, &FileBrowserWidget::viewModeChanged, this, [this](FileBrowserWidget::ViewMode) {
+        updateToolbar();
     });
 }
