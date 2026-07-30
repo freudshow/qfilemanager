@@ -46,10 +46,22 @@ add_library(filemanager_ui STATIC
 target_include_directories(filemanager_ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(filemanager_ui PUBLIC Qt6::Core Qt6::Gui Qt6::Widgets filemanager_settings)
 
+qt_add_resources(filemanager_ui "filemanager_icons"
+    PREFIX "/icons"
+    BASE "${CMAKE_CURRENT_SOURCE_DIR}/resources"
+    FILES
+        resources/filemanager.png
+)
+
 add_executable(filemanager_app
     src/main.cpp
 )
 target_link_libraries(filemanager_app PRIVATE filemanager_ui)
+
+if(WIN32)
+    target_sources(filemanager_app PRIVATE resources/filemanager.rc)
+    set_target_properties(filemanager_app PROPERTIES WIN32_EXECUTABLE TRUE)
+endif()
 
 enable_testing()
 add_subdirectory(tests)

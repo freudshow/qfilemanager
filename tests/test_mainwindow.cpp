@@ -47,6 +47,7 @@ private slots:
     void gitBranchPickerRejectsOptionLikeInputAndSwitchesValidBranch();
     void gitActionCompletionRefreshesKnownMenuDirtyState();
     void gitActionResultsUseOutputAndErrorPresentation();
+    void mainWindowUsesBundledApplicationIcon();
 };
 
 namespace {
@@ -724,6 +725,12 @@ void MainWindowTest::gitActionResultsUseOutputAndErrorPresentation() {
     QCOMPARE(presented.at(1).title, QStringLiteral("Status"));
     QVERIFY(!presented.at(1).result.succeeded());
     QCOMPARE(presented.at(1).result.standardError, QStringLiteral("status failed"));
+}
+
+void MainWindowTest::mainWindowUsesBundledApplicationIcon() {
+    MainWindow window;
+
+    QVERIFY(!window.windowIcon().isNull());
 }
 
 QTEST_MAIN(MainWindowTest)

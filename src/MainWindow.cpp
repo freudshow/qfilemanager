@@ -10,6 +10,7 @@
 #include "ui/MetadataPanel.h"
 #include "ui/TabStrip.h"
 
+#include <QIcon>
 #include <QTabWidget>
 #include <QAction>
 #include <QActionGroup>
@@ -33,6 +34,7 @@ MainWindow::MainWindow(QWidget *parent)
     , favoritesModel_(new FavoritesModel(this))
     , gitService_(new GitService(this)) {
     setWindowTitle("Qt File Manager");
+    setWindowIcon(QIcon(QStringLiteral(":/icons/filemanager.png")));
     gitService_->setObjectName("gitService");
 
     toolbar_ = addToolBar(tr("Browse"));
