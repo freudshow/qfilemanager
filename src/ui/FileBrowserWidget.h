@@ -8,6 +8,8 @@
 
 class QEvent;
 class QFileSystemModel;
+class QFileSystemWatcher;
+class QTimer;
 class QAbstractItemView;
 class QHBoxLayout;
 class QLineEdit;
@@ -41,6 +43,7 @@ public:
     bool canGoForward() const;
     bool goBack();
     bool goForward();
+    bool refreshCurrentDirectory();
     QLineEdit *addressBar() const;
     QWidget *breadcrumbContainer() const;
     ViewMode viewMode() const;
@@ -57,6 +60,7 @@ public:
 signals:
     void pathChanged(const QString &path);
     void historyChanged(bool canGoBack, bool canGoForward);
+    void directoryRefreshed();
     void selectedPathChanged(const QString &path);
     void viewModeChanged(FileBrowserWidget::ViewMode mode);
     void openPathInNewTabRequested(const QString &path);
@@ -76,6 +80,8 @@ private slots:
 private:
     bool eventFilter(QObject *watched, QEvent *event) override;
     bool applyPath(const QString &path, bool recordHistory);
+    void updateViewRoots(const QModelIndex &rootIndex);
+    void watchCurrentDirectory();
     void recordHistoryPath(const QString &path);
     void rebuildBreadcrumbs();
     QStringList pathSegments(const QString &path) const;
@@ -94,6 +100,9 @@ private:
     QHBoxLayout *breadcrumbLayout_ = nullptr;
     QShortcut *focusAddressShortcut_ = nullptr;
     QToolButton *upButton_ = nullptr;
+    QToolButton *refreshButton_ = nullptr;
+    QFileSystemWatcher *directoryWatcher_ = nullptr;
+    QTimer *refreshTimer_ = nullptr;
     QString currentPath_;
     QStringList history_;
     int historyIndex_ = -1;

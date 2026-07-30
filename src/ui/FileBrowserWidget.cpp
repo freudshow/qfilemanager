@@ -7,6 +7,7 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFileSystemModel>
+#include <QFileSystemWatcher>
 #include <QHBoxLayout>
 #include <QItemSelectionModel>
 #include <QKeyEvent>
@@ -18,6 +19,7 @@
 #include <QShortcut>
 #include <QStackedWidget>
 #include <QTableView>
+#include <QTimer>
 #include <QToolButton>
 #include <QUrl>
 #include <QVBoxLayout>
@@ -44,7 +46,10 @@ FileBrowserWidget::FileBrowserWidget(QWidget *parent)
     , addressBar_(new QLineEdit(this))
     , breadcrumbContainer_(new QWidget(this))
     , focusAddressShortcut_(new QShortcut(QKeySequence(QStringLiteral("Ctrl+L")), this))
-    , upButton_(new QToolButton(this)) {
+    , upButton_(new QToolButton(this))
+    , refreshButton_(new QToolButton(this))
+    , directoryWatcher_(new QFileSystemWatcher(this))
+    , refreshTimer_(new QTimer(this)) {
     openWithLauncher_ = [](const QString &program, const QStringList &arguments) {
         return QProcess::startDetached(program, arguments);
     };
@@ -59,12 +64,18 @@ FileBrowserWidget::FileBrowserWidget(QWidget *parent)
     upButton_->setObjectName("upButton");
     upButton_->setText(QStringLiteral("↑"));
     upButton_->setToolTip(tr("Go to parent folder"));
+    refreshButton_->setObjectName("refreshButton");
+    refreshButton_->setText(tr("Refresh"));
+    refreshButton_->setToolTip(tr("Refresh this folder"));
+    refreshTimer_->setSingleShot(true);
+    refreshTimer_->setInterval(100);
     auto *addressContainer = new QWidget(this);
     addressContainer->setObjectName("addressBarContainer");
     auto *addressLayout = new QHBoxLayout(addressContainer);
     addressLayout->setContentsMargins(8, 6, 8, 6);
     addressLayout->setSpacing(8);
     addressLayout->addWidget(upButton_);
+    addressLayout->addWidget(refreshButton_);
     addressBar_->hide();
     addressBar_->installEventFilter(this);
     addressLayout->addWidget(breadcrumbContainer_, 1);
@@ -72,8 +83,8 @@ FileBrowserWidget::FileBrowserWidget(QWidget *parent)
     addressContainer->setStyleSheet(QStringLiteral(
         "QWidget#addressBarContainer { background: #f6f8fb; border: 1px solid #d7dee8; border-radius: 10px; }"
         "QLineEdit#addressBar { background: white; border: 1px solid #c8d2df; border-radius: 8px; padding: 6px 10px; }"
-        "QToolButton#upButton { background: #ffffff; border: 1px solid #c8d2df; border-radius: 8px; padding: 5px 10px; }"
-        "QToolButton#upButton:hover { background: #eaf1f8; }"));
+        "QToolButton#upButton, QToolButton#refreshButton { background: #ffffff; border: 1px solid #c8d2df; border-radius: 8px; padding: 5px 10px; }"
+        "QToolButton#upButton:hover, QToolButton#refreshButton:hover { background: #eaf1f8; }"));
 
     model_->setFilter(QDir::AllEntries | QDir::NoDotAndDotDot | QDir::AllDirs);
     model_->setRootPath(QDir::rootPath());
@@ -110,6 +121,15 @@ FileBrowserWidget::FileBrowserWidget(QWidget *parent)
     connect(addressBar_, &QLineEdit::returnPressed, this, &FileBrowserWidget::navigateFromAddressBar);
     connect(focusAddressShortcut_, &QShortcut::activated, this, &FileBrowserWidget::enterAddressEditMode);
     connect(upButton_, &QToolButton::clicked, this, &FileBrowserWidget::navigateToParentDirectory);
+    connect(refreshButton_, &QToolButton::clicked, this, [this] {
+        refreshCurrentDirectory();
+    });
+    connect(directoryWatcher_, &QFileSystemWatcher::directoryChanged, this, [this](const QString &) {
+        refreshTimer_->start();
+    });
+    connect(refreshTimer_, &QTimer::timeout, this, [this] {
+        refreshCurrentDirectory();
+    });
     const auto connectView = [this](QAbstractItemView *view) {
         connect(view, &QAbstractItemView::doubleClicked, this, &FileBrowserWidget::openIndex);
         connect(view->selectionModel(), &QItemSelectionModel::selectionChanged, this, &FileBrowserWidget::emitSelectedPath);
@@ -164,6 +184,12 @@ bool FileBrowserWidget::goForward() {
     return true;
 }
 
+void FileBrowserWidget::updateViewRoots(const QModelIndex &rootIndex) {
+    detailsView_->setRootIndex(rootIndex);
+    listView_->setRootIndex(rootIndex);
+    tilesView_->setRootIndex(rootIndex);
+}
+
 bool FileBrowserWidget::applyPath(const QString &path, bool recordHistory) {
     const QFileInfo info(path);
     if (!info.exists() || !info.isDir()) {
@@ -178,10 +204,9 @@ bool FileBrowserWidget::applyPath(const QString &path, bool recordHistory) {
     }
 
     const QModelIndex rootIndex = model_->setRootPath(absolutePath);
-    detailsView_->setRootIndex(rootIndex);
-    listView_->setRootIndex(rootIndex);
-    tilesView_->setRootIndex(rootIndex);
+    updateViewRoots(rootIndex);
     currentPath_ = absolutePath;
+    watchCurrentDirectory();
     addressBar_->setText(currentPath_);
     rebuildBreadcrumbs();
     leaveAddressEditMode();
@@ -190,6 +215,30 @@ bool FileBrowserWidget::applyPath(const QString &path, bool recordHistory) {
     }
     emit pathChanged(currentPath_);
     return true;
+}
+
+void FileBrowserWidget::watchCurrentDirectory() {
+    const QStringList watchedPaths = directoryWatcher_->directories();
+    if (!watchedPaths.isEmpty()) {
+        directoryWatcher_->removePaths(watchedPaths);
+    }
+
+    if (!currentPath_.isEmpty() && QFileInfo(currentPath_).isDir()) {
+        directoryWatcher_->addPath(currentPath_);
+    }
+}
+
+bool FileBrowserWidget::refreshCurrentDirectory() {
+    if (currentPath_.isEmpty() || !QFileInfo(currentPath_).isDir()) {
+        watchCurrentDirectory();
+        return false;
+    }
+
+    const QModelIndex rootIndex = model_->setRootPath(currentPath_);
+    updateViewRoots(rootIndex);
+    watchCurrentDirectory();
+    emit directoryRefreshed();
+    return rootIndex.isValid();
 }
 
 void FileBrowserWidget::recordHistoryPath(const QString &path) {

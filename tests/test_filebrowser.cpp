@@ -52,6 +52,8 @@ private slots:
     void failedHistoryNavigationPreservesHistoryIndex();
     void addressBarNavigatesToExistingDirectoryOnly();
     void upButtonNavigatesToParentDirectory();
+    void refreshButtonReloadsCurrentDirectoryWithoutNavigation();
+    void changesInCurrentDirectoryTriggerRefresh();
     void addressBarUsesModernNavigationChrome();
     void doubleClickingFolderChangesCurrentPath();
     void doubleClickingFileOpensDesktopUrl();
@@ -300,6 +302,43 @@ void FileBrowserWidgetTest::upButtonNavigatesToParentDirectory() {
     QTest::mouseClick(upButton, Qt::LeftButton);
 
     QCOMPARE(browser.currentPath(), root.path());
+}
+
+void FileBrowserWidgetTest::refreshButtonReloadsCurrentDirectoryWithoutNavigation() {
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+
+    FileBrowserWidget browser;
+    QVERIFY(browser.setCurrentPath(directory.path()));
+    QSignalSpy refreshedSpy(&browser, &FileBrowserWidget::directoryRefreshed);
+    auto *refreshButton = browser.findChild<QToolButton *>("refreshButton");
+    QVERIFY(refreshButton != nullptr);
+
+    QTest::mouseClick(refreshButton, Qt::LeftButton);
+
+    QCOMPARE(refreshedSpy.count(), 1);
+    QCOMPARE(browser.currentPath(), directory.path());
+    QVERIFY(!browser.canGoBack());
+    QVERIFY(!browser.canGoForward());
+}
+
+void FileBrowserWidgetTest::changesInCurrentDirectoryTriggerRefresh() {
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+
+    FileBrowserWidget browser;
+    QVERIFY(browser.setCurrentPath(directory.path()));
+    QSignalSpy refreshedSpy(&browser, &FileBrowserWidget::directoryRefreshed);
+    const QString createdPath = QDir(directory.path()).filePath("created-by-another-process.txt");
+    QFile createdFile(createdPath);
+    QVERIFY(createdFile.open(QIODevice::WriteOnly));
+    createdFile.write("new file");
+    createdFile.close();
+
+    QTRY_VERIFY(refreshedSpy.count() >= 1);
+    QCOMPARE(browser.currentPath(), directory.path());
+    QVERIFY(!browser.canGoBack());
+    QVERIFY(!browser.canGoForward());
 }
 
 void FileBrowserWidgetTest::addressBarUsesModernNavigationChrome() {
