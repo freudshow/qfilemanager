@@ -7,6 +7,7 @@
 #include <QFileInfo>
 
 #include <filesystem>
+#include <utility>
 
 namespace {
 
@@ -64,6 +65,31 @@ bool FileOperationService::copy(const QStringList &sources, const QString &desti
         if (!copyOne(source, destinationPathForSource(source, destination), errorMessage)) {
             return false;
         }
+    }
+    return true;
+}
+
+bool FileOperationService::copyWithAutoRename(const QStringList &sources, const QString &destination, QString *errorMessage) {
+    if (!validateSources(sources, errorMessage)) {
+        return false;
+    }
+
+    const QFileInfo destinationInfo(destination);
+    if (!destinationInfo.exists() || !destinationInfo.isDir()) {
+        setError(errorMessage, QStringLiteral("Destination directory does not exist: %1").arg(destination));
+        return false;
+    }
+
+    QStringList createdTargets;
+    for (const QString &source : sources) {
+        const QString target = uniqueCopyTarget(source, destination);
+        if (!copyOne(source, target, errorMessage)) {
+            for (const QString &createdTarget : std::as_const(createdTargets)) {
+                removePath(createdTarget, nullptr);
+            }
+            return false;
+        }
+        createdTargets.append(target);
     }
     return true;
 }
@@ -145,6 +171,28 @@ bool FileOperationService::createFolder(const QString &parentDir, const QString 
     return true;
 }
 
+bool FileOperationService::createTextFile(const QString &parentDir, const QString &name, QString *errorMessage) {
+    const QFileInfo parentInfo(parentDir);
+    if (!parentInfo.exists() || !parentInfo.isDir()) {
+        setError(errorMessage, QStringLiteral("Parent directory does not exist: %1").arg(parentDir));
+        return false;
+    }
+
+    const QString cleanName = name.trimmed();
+    if (cleanName.isEmpty() || cleanName.contains(QLatin1Char('/')) || cleanName.contains(QLatin1Char('\\'))) {
+        setError(errorMessage, QStringLiteral("Invalid file name: %1").arg(name));
+        return false;
+    }
+
+    const QString filePath = QDir(parentDir).filePath(cleanName);
+    QFile file(filePath);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::NewOnly)) {
+        setError(errorMessage, QStringLiteral("Could not create text file: %1").arg(filePath));
+        return false;
+    }
+    return true;
+}
+
 bool FileOperationService::deleteToTrash(const QStringList &paths, QString *errorMessage) {
     if (!validateSources(paths, errorMessage)) {
         return false;
@@ -160,8 +208,13 @@ bool FileOperationService::copyOne(const QString &source, const QString &target,
     }
 
     if (sourceInfo.isSymLink()) {
-        const std::filesystem::path linkTarget = std::filesystem::read_symlink(source.toStdString());
         std::error_code errorCode;
+        const std::filesystem::path linkTarget = std::filesystem::read_symlink(source.toStdString(), errorCode);
+        if (errorCode) {
+            setError(errorMessage, QStringLiteral("Could not read symlink %1").arg(source));
+            return false;
+        }
+        errorCode.clear();
         std::filesystem::create_symlink(linkTarget, target.toStdString(), errorCode);
         if (errorCode) {
             setError(errorMessage, QStringLiteral("Could not copy symlink %1 to %2").arg(source, target));
@@ -175,7 +228,11 @@ bool FileOperationService::copyOne(const QString &source, const QString &target,
             setError(errorMessage, QStringLiteral("Cannot copy or move a directory inside itself: %1").arg(source));
             return false;
         }
-        return copyDirectory(source, target, errorMessage);
+        if (copyDirectory(source, target, errorMessage)) {
+            return true;
+        }
+        removePath(target, nullptr);
+        return false;
     }
 
     if (!QFile::copy(source, target)) {
@@ -237,4 +294,21 @@ bool FileOperationService::targetIsInsideSource(const QString &source, const QSt
 
 QString FileOperationService::destinationPathForSource(const QString &source, const QString &destination) const {
     return QDir(destination).filePath(QFileInfo(source).fileName());
+}
+
+QString FileOperationService::uniqueCopyTarget(const QString &source, const QString &destination) const {
+    const QFileInfo sourceInfo(source);
+    const QString baseName = sourceInfo.completeBaseName().isEmpty() ? sourceInfo.fileName() : sourceInfo.completeBaseName();
+    const QString suffix = sourceInfo.isDir() || sourceInfo.completeSuffix().isEmpty()
+        ? QString()
+        : QStringLiteral(".%1").arg(sourceInfo.completeSuffix());
+    const QString originalName = sourceInfo.fileName();
+    QString candidate = QDir(destination).filePath(originalName);
+    int copyNumber = 0;
+    while (pathExistsOrIsSymlink(candidate)) {
+        ++copyNumber;
+        const QString copyLabel = copyNumber == 1 ? QStringLiteral(" (copy)") : QStringLiteral(" (copy %1)").arg(copyNumber);
+        candidate = QDir(destination).filePath(baseName + copyLabel + suffix);
+    }
+    return candidate;
 }

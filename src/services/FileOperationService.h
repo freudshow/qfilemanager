@@ -13,9 +13,11 @@ public:
     ~FileOperationService();
 
     bool copy(const QStringList &sources, const QString &destination, QString *errorMessage = nullptr);
+    bool copyWithAutoRename(const QStringList &sources, const QString &destination, QString *errorMessage = nullptr);
     bool move(const QStringList &sources, const QString &destination, QString *errorMessage = nullptr);
     bool renamePath(const QString &source, const QString &targetName, QString *errorMessage = nullptr);
     bool createFolder(const QString &parentDir, const QString &name, QString *errorMessage = nullptr);
+    bool createTextFile(const QString &parentDir, const QString &name, QString *errorMessage = nullptr);
     bool deleteToTrash(const QStringList &paths, QString *errorMessage = nullptr);
 
 private:
@@ -24,6 +26,7 @@ private:
     bool removePath(const QString &path, QString *errorMessage);
     bool targetIsInsideSource(const QString &source, const QString &target) const;
     QString destinationPathForSource(const QString &source, const QString &destination) const;
+    QString uniqueCopyTarget(const QString &source, const QString &destination) const;
 
     PlatformServices *platformServices_ = nullptr;
     std::unique_ptr<PlatformServices> ownedPlatformServices_;

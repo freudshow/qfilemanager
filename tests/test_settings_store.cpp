@@ -15,6 +15,8 @@ class SettingsStoreTest : public QObject {
 private slots:
     void initTestCase();
     void roundTripPreservesTabsFavoritesOptionsAndSplitters();
+    void savesAndLoadsSelectedTheme();
+    void legacySettingsDefaultToAuroraTheme();
     void invalidJsonCreatesBackupAndFallsBack();
     void invalidTopLevelJsonCreatesBackupAndFallsBack();
     void malformedFieldValuesCreateBackupAndFallback_data();
@@ -80,6 +82,33 @@ void SettingsStoreTest::roundTripPreservesTabsFavoritesOptionsAndSplitters() {
     QCOMPARE(loaded.favorites[1].path, QString("/tmp/downloads"));
     QVERIFY(loaded.showHiddenFiles);
     QVERIFY(!loaded.confirmDeleteToTrash);
+}
+
+void SettingsStoreTest::savesAndLoadsSelectedTheme() {
+    SettingsStore store;
+    QFile::remove(store.settingsPath());
+    QFile::remove(store.settingsPath() + ".bak");
+
+    AppSettings settings;
+    settings.theme = QStringLiteral("graphite");
+    QString error;
+    QVERIFY2(store.save(settings, &error), qPrintable(error));
+
+    AppSettings loaded;
+    QVERIFY2(store.load(loaded, &error), qPrintable(error));
+    QCOMPARE(loaded.theme, QStringLiteral("graphite"));
+}
+
+void SettingsStoreTest::legacySettingsDefaultToAuroraTheme() {
+    SettingsStore store;
+    QFile::remove(store.settingsPath());
+    QFile::remove(store.settingsPath() + ".bak");
+    writeSettingsFile(store.settingsPath(), QByteArray(R"({"version":1})"));
+
+    AppSettings loaded;
+    QString error;
+    QVERIFY2(store.load(loaded, &error), qPrintable(error));
+    QCOMPARE(loaded.theme, QStringLiteral("aurora"));
 }
 
 void SettingsStoreTest::invalidJsonCreatesBackupAndFallsBack() {

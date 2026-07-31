@@ -1,15 +1,21 @@
 #include <QtTest/QtTest>
 
 #include <QDesktopServices>
+#include <QDateTime>
 #include <QDir>
 #include <QFile>
+#include <QFileDevice>
 #include <QFileSystemModel>
+#include <QGuiApplication>
+#include <QClipboard>
+#include <QHeaderView>
 #include <QLineEdit>
 #include <QItemSelectionModel>
 #include <QLabel>
 #include <QListView>
 #include <QMenu>
 #include <QScrollArea>
+#include <QSortFilterProxyModel>
 #include <QShortcut>
 #include <QSignalSpy>
 #include <QStandardPaths>
@@ -44,6 +50,7 @@ private slots:
     void defaultRestoreCreatesHomeTab();
     void newTabButtonCreatesHomeTab();
     void restoresSavedTabs();
+    void restoresPerTabSortState();
     void setCurrentPathUpdatesViewAndEmits();
     void tracksBackAndForwardHistory();
     void recordsOnlyDistinctSuccessfulNavigations();
@@ -60,6 +67,13 @@ private slots:
     void configuredDefaultAppOpensFileInsteadOfDesktopUrl();
     void missingConfiguredDefaultFallsBackToDesktopUrl();
     void selectingEntryEmitsSelectedPath();
+    void contextMenuContainsSortNewCopyPasteAndTerminalActions();
+    void keyboardCopyAndPasteCopiesSelectedFile();
+    void clipboardReplacementDisablesPasteFallback();
+    void changesSortColumnAndOrder();
+    void sortsFilesByEachSupportedColumn();
+    void headerClickTogglesSortOrder();
+    void terminalActionUsesSelectedFileParentAndReportsFailure();
     void gitMenuRequestedFromContextMenuCarriesTargetDetails_data();
     void gitMenuRequestedFromContextMenuCarriesTargetDetails();
     void enablesDragAndDropFileOperations();
@@ -121,6 +135,33 @@ void FileBrowserWidgetTest::restoresSavedTabs() {
     QCOMPARE(tabs.count(), 2);
     QCOMPARE(manager.browserAt(0)->currentPath(), first.path());
     QCOMPARE(manager.browserAt(1)->currentPath(), second.path());
+}
+
+void FileBrowserWidgetTest::restoresPerTabSortState() {
+    QTemporaryDir first;
+    QTemporaryDir second;
+    QVERIFY(first.isValid());
+    QVERIFY(second.isValid());
+
+    AppSettings settings;
+    settings.tabs.append({first.path(), QStringLiteral("size"), QStringLiteral("descending")});
+    settings.tabs.append({second.path(), QStringLiteral("created"), QStringLiteral("ascending")});
+
+    QTabWidget tabs;
+    TabManager manager;
+    manager.setTabWidget(&tabs);
+    manager.restoreTabs(settings);
+
+    QCOMPARE(manager.browserAt(0)->sortColumnKey(), QStringLiteral("size"));
+    QCOMPARE(manager.browserAt(0)->sortOrderKey(), QStringLiteral("descending"));
+    QCOMPARE(manager.browserAt(1)->sortColumnKey(), QStringLiteral("created"));
+    QCOMPARE(manager.browserAt(1)->sortOrderKey(), QStringLiteral("ascending"));
+
+    const QVector<TabState> saved = manager.tabStates();
+    QCOMPARE(saved.at(0).sortColumn, QStringLiteral("size"));
+    QCOMPARE(saved.at(0).sortOrder, QStringLiteral("descending"));
+    QCOMPARE(saved.at(1).sortColumn, QStringLiteral("created"));
+    QCOMPARE(saved.at(1).sortOrder, QStringLiteral("ascending"));
 }
 
 void FileBrowserWidgetTest::setCurrentPathUpdatesViewAndEmits() {
@@ -358,9 +399,9 @@ void FileBrowserWidgetTest::doubleClickingFolderChangesCurrentPath() {
     FileBrowserWidget browser;
     QVERIFY(browser.setCurrentPath(root.path()));
 
-    auto *model = qobject_cast<QFileSystemModel *>(browser.view()->model());
+    auto *model = browser.fileModel();
     QVERIFY(model != nullptr);
-    const QModelIndex childIndex = model->index(childPath);
+    const QModelIndex childIndex = browser.viewIndexForPath(childPath);
     QVERIFY(childIndex.isValid());
 
     QMetaObject::invokeMethod(browser.view(), "doubleClicked", Q_ARG(QModelIndex, childIndex));
@@ -383,9 +424,9 @@ void FileBrowserWidgetTest::doubleClickingFileOpensDesktopUrl() {
     FileBrowserWidget browser;
     QVERIFY(browser.setCurrentPath(root.path()));
 
-    auto *model = qobject_cast<QFileSystemModel *>(browser.view()->model());
+    auto *model = browser.fileModel();
     QVERIFY(model != nullptr);
-    const QModelIndex fileIndex = model->index(filePath);
+    const QModelIndex fileIndex = browser.viewIndexForPath(filePath);
     QVERIFY(fileIndex.isValid());
 
     QMetaObject::invokeMethod(browser.view(), "doubleClicked", Q_ARG(QModelIndex, fileIndex));
@@ -424,9 +465,9 @@ void FileBrowserWidgetTest::configuredDefaultAppOpensFileInsteadOfDesktopUrl() {
     });
 
     QVERIFY(browser.setCurrentPath(root.path()));
-    auto *model = qobject_cast<QFileSystemModel *>(browser.view()->model());
+    auto *model = browser.fileModel();
     QVERIFY(model != nullptr);
-    const QModelIndex fileIndex = model->index(filePath);
+    const QModelIndex fileIndex = browser.viewIndexForPath(filePath);
     QVERIFY(fileIndex.isValid());
 
     QMetaObject::invokeMethod(browser.view(), "doubleClicked", Q_ARG(QModelIndex, fileIndex));
@@ -451,9 +492,9 @@ void FileBrowserWidgetTest::missingConfiguredDefaultFallsBackToDesktopUrl() {
     browser.setOpenWithDefaults({{QStringLiteral(".txt"), QDir(root.path()).filePath("missing-editor")}});
     QVERIFY(browser.setCurrentPath(root.path()));
 
-    auto *model = qobject_cast<QFileSystemModel *>(browser.view()->model());
+    auto *model = browser.fileModel();
     QVERIFY(model != nullptr);
-    const QModelIndex fileIndex = model->index(filePath);
+    const QModelIndex fileIndex = browser.viewIndexForPath(filePath);
     QVERIFY(fileIndex.isValid());
 
     QMetaObject::invokeMethod(browser.view(), "doubleClicked", Q_ARG(QModelIndex, fileIndex));
@@ -476,15 +517,268 @@ void FileBrowserWidgetTest::selectingEntryEmitsSelectedPath() {
     QVERIFY(browser.setCurrentPath(root.path()));
     QSignalSpy selectedPathSpy(&browser, &FileBrowserWidget::selectedPathChanged);
 
-    auto *model = qobject_cast<QFileSystemModel *>(browser.view()->model());
+    auto *model = browser.fileModel();
     QVERIFY(model != nullptr);
-    const QModelIndex fileIndex = model->index(filePath);
+    const QModelIndex fileIndex = browser.viewIndexForPath(filePath);
     QVERIFY(fileIndex.isValid());
 
     browser.view()->selectionModel()->select(fileIndex, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
 
     QCOMPARE(selectedPathSpy.count(), 1);
     QCOMPARE(selectedPathSpy.takeFirst().at(0).toString(), filePath);
+}
+
+void FileBrowserWidgetTest::contextMenuContainsSortNewCopyPasteAndTerminalActions() {
+    QTemporaryDir root;
+    QVERIFY(root.isValid());
+    const QString filePath = QDir(root.path()).filePath("document.txt");
+    QVERIFY2(QFile(filePath).open(QIODevice::WriteOnly), "source file should be created");
+
+    FileBrowserWidget browser;
+    browser.resize(800, 600);
+    browser.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&browser));
+    QVERIFY(browser.setCurrentPath(root.path()));
+
+    auto *model = browser.fileModel();
+    QVERIFY(model != nullptr);
+    const QModelIndex fileIndex = browser.viewIndexForPath(filePath);
+    QVERIFY(fileIndex.isValid());
+    QTRY_VERIFY(browser.view()->visualRect(fileIndex).isValid());
+
+    QStringList menuTitles;
+    bool hasTerminalAction = false;
+    bool hasCopyAction = false;
+    bool hasPasteAction = false;
+    bool hasNewFolderAction = false;
+    bool hasNewTextFileAction = false;
+    connect(&browser, &FileBrowserWidget::gitMenuRequested, &browser,
+            [&](QMenu *parentMenu, const QString &, bool) {
+                for (QAction *action : parentMenu->actions()) {
+                    if (action->menu() != nullptr) {
+                        menuTitles.append(action->text());
+                    }
+                }
+                hasTerminalAction = parentMenu->findChild<QAction *>("openInTerminalAction") != nullptr;
+                hasCopyAction = parentMenu->findChild<QAction *>("copyAction") != nullptr;
+                hasPasteAction = parentMenu->findChild<QAction *>("pasteAction") != nullptr;
+                hasNewFolderAction = parentMenu->findChild<QAction *>("newFolderAction") != nullptr;
+                hasNewTextFileAction = parentMenu->findChild<QAction *>("newTextFileAction") != nullptr;
+                QTimer::singleShot(0, parentMenu, &QMenu::close);
+            });
+
+    QVERIFY(QMetaObject::invokeMethod(&browser, "showContextMenu", Qt::DirectConnection,
+                                      Q_ARG(QPoint, browser.view()->visualRect(fileIndex).center())));
+
+    QVERIFY(menuTitles.contains(QStringLiteral("Sort by")));
+    QVERIFY(menuTitles.contains(QStringLiteral("Sort Order")));
+    QVERIFY(menuTitles.contains(QStringLiteral("New")));
+    QVERIFY(hasTerminalAction);
+    QVERIFY(hasCopyAction);
+    QVERIFY(hasPasteAction);
+    QVERIFY(hasNewFolderAction);
+    QVERIFY(hasNewTextFileAction);
+}
+
+void FileBrowserWidgetTest::keyboardCopyAndPasteCopiesSelectedFile() {
+    QTemporaryDir sourceDir;
+    QTemporaryDir destinationDir;
+    QVERIFY(sourceDir.isValid());
+    QVERIFY(destinationDir.isValid());
+    const QString sourcePath = QDir(sourceDir.path()).filePath("document.txt");
+    QFile source(sourcePath);
+    QVERIFY(source.open(QIODevice::WriteOnly));
+    QCOMPARE(source.write("clipboard"), qint64(9));
+    source.close();
+
+    FileBrowserWidget browser;
+    browser.resize(800, 600);
+    browser.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&browser));
+    QVERIFY(browser.setCurrentPath(sourceDir.path()));
+    auto *model = browser.fileModel();
+    QVERIFY(model != nullptr);
+    const QModelIndex sourceIndex = browser.viewIndexForPath(sourcePath);
+    QVERIFY(sourceIndex.isValid());
+    browser.view()->selectionModel()->select(sourceIndex, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+    browser.view()->setFocus();
+
+    QTest::keyClick(browser.view(), Qt::Key_C, Qt::ControlModifier);
+    QVERIFY(browser.setCurrentPath(destinationDir.path()));
+    QTest::keyClick(browser.view(), Qt::Key_V, Qt::ControlModifier);
+
+    QTRY_VERIFY(QFileInfo::exists(QDir(destinationDir.path()).filePath("document.txt")));
+    QFile copied(QDir(destinationDir.path()).filePath("document.txt"));
+    QVERIFY(copied.open(QIODevice::ReadOnly));
+    QCOMPARE(copied.readAll(), QByteArray("clipboard"));
+}
+
+void FileBrowserWidgetTest::clipboardReplacementDisablesPasteFallback() {
+    QTemporaryDir sourceDir;
+    QTemporaryDir destinationDir;
+    QVERIFY(sourceDir.isValid());
+    QVERIFY(destinationDir.isValid());
+    const QString sourcePath = QDir(sourceDir.path()).filePath("document.txt");
+    QFile source(sourcePath);
+    QVERIFY(source.open(QIODevice::WriteOnly));
+    QVERIFY(source.write("clipboard") == 9);
+    source.close();
+
+    FileBrowserWidget browser;
+    QVERIFY(browser.setCurrentPath(sourceDir.path()));
+    const QModelIndex sourceIndex = browser.viewIndexForPath(sourcePath);
+    QVERIFY(sourceIndex.isValid());
+    browser.view()->selectionModel()->select(sourceIndex, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+    browser.view()->setFocus();
+    QTest::keyClick(browser.view(), Qt::Key_C, Qt::ControlModifier);
+    QGuiApplication::clipboard()->setText(QStringLiteral("not a local file"));
+
+    QVERIFY(browser.setCurrentPath(destinationDir.path()));
+    QTest::keyClick(browser.view(), Qt::Key_V, Qt::ControlModifier);
+    QTest::qWait(150);
+    QVERIFY(!QFileInfo::exists(QDir(destinationDir.path()).filePath("document.txt")));
+}
+
+void FileBrowserWidgetTest::changesSortColumnAndOrder() {
+    FileBrowserWidget browser;
+
+    browser.setSort(QStringLiteral("modified"), Qt::DescendingOrder);
+
+    QCOMPARE(browser.sortColumnKey(), QStringLiteral("modified"));
+    QCOMPARE(browser.sortOrderKey(), QStringLiteral("descending"));
+
+    browser.setSort(QStringLiteral("created"), Qt::AscendingOrder);
+    QCOMPARE(browser.sortColumnKey(), QStringLiteral("created"));
+    QCOMPARE(browser.sortOrderKey(), QStringLiteral("ascending"));
+}
+
+void FileBrowserWidgetTest::sortsFilesByEachSupportedColumn() {
+    QTemporaryDir root;
+    QVERIFY(root.isValid());
+    QVERIFY(QDir(root.path()).mkpath("name"));
+    QVERIFY(QDir(root.path()).mkpath("type"));
+    QVERIFY(QDir(root.path()).mkpath("size"));
+    QVERIFY(QDir(root.path()).mkpath("modified"));
+    QVERIFY(QDir(root.path()).mkpath("created"));
+
+    const auto writeSizedFile = [](const QString &path, int size) {
+        QFile file(path);
+        if (!file.open(QIODevice::WriteOnly)) {
+            return false;
+        }
+        return file.write(QByteArray(size, 'x')) == size;
+    };
+    const auto firstVisiblePath = [](FileBrowserWidget &browser) {
+        auto *proxy = qobject_cast<QSortFilterProxyModel *>(browser.view()->model());
+        const QModelIndex index = proxy->index(0, 0, browser.view()->rootIndex());
+        return browser.fileModel()->filePath(proxy->mapToSource(index));
+    };
+    const auto lastVisiblePath = [](FileBrowserWidget &browser) {
+        auto *proxy = qobject_cast<QSortFilterProxyModel *>(browser.view()->model());
+        const QModelIndex rootIndex = browser.view()->rootIndex();
+        const QModelIndex index = proxy->index(proxy->rowCount(rootIndex) - 1, 0, rootIndex);
+        return browser.fileModel()->filePath(proxy->mapToSource(index));
+    };
+    const auto checkPair = [&](const QString &directory, const QString &column, const QString &ascendingFirst, const QString &descendingFirst) {
+        FileBrowserWidget browser;
+        QVERIFY(browser.setCurrentPath(directory));
+        QTRY_COMPARE(browser.view()->model()->rowCount(browser.view()->rootIndex()), 2);
+        browser.setSort(column, Qt::AscendingOrder);
+        QCOMPARE(firstVisiblePath(browser), ascendingFirst);
+        browser.setSort(column, Qt::DescendingOrder);
+        QCOMPARE(firstVisiblePath(browser), descendingFirst);
+    };
+
+    const QString nameFirst = QDir(root.path()).filePath("name/alpha.txt");
+    const QString nameSecond = QDir(root.path()).filePath("name/zeta.txt");
+    QVERIFY(writeSizedFile(nameFirst, 1));
+    QVERIFY(writeSizedFile(nameSecond, 1));
+    checkPair(QDir(root.path()).filePath("name"), QStringLiteral("name"), nameFirst, nameSecond);
+
+    const QString typeFirst = QDir(root.path()).filePath("type/zeta.txt");
+    const QString typeSecond = QDir(root.path()).filePath("type/alpha.png");
+    QVERIFY(writeSizedFile(typeFirst, 1));
+    QVERIFY(writeSizedFile(typeSecond, 1));
+    {
+        FileBrowserWidget browser;
+        const QString typeDirectory = QDir(root.path()).filePath("type");
+        QVERIFY(browser.setCurrentPath(typeDirectory));
+        QTRY_COMPARE(browser.view()->model()->rowCount(browser.view()->rootIndex()), 2);
+        const QString firstType = browser.fileModel()->type(browser.fileModel()->index(typeFirst));
+        const QString secondType = browser.fileModel()->type(browser.fileModel()->index(typeSecond));
+        const int typeComparison = QString::compare(firstType, secondType, Qt::CaseInsensitive);
+        const QString ascendingFirst = typeComparison == 0 ? typeSecond : typeComparison < 0 ? typeFirst : typeSecond;
+        const QString descendingFirst = typeComparison == 0 ? typeFirst : typeComparison < 0 ? typeSecond : typeFirst;
+        browser.setSort(QStringLiteral("type"), Qt::AscendingOrder);
+        QCOMPARE(firstVisiblePath(browser), ascendingFirst);
+        browser.setSort(QStringLiteral("type"), Qt::DescendingOrder);
+        QCOMPARE(firstVisiblePath(browser), descendingFirst);
+    }
+
+    const QString sizeFirst = QDir(root.path()).filePath("size/zeta-small.txt");
+    const QString sizeSecond = QDir(root.path()).filePath("size/alpha-large.txt");
+    QVERIFY(writeSizedFile(sizeFirst, 1));
+    QVERIFY(writeSizedFile(sizeSecond, 20));
+    checkPair(QDir(root.path()).filePath("size"), QStringLiteral("size"), sizeFirst, sizeSecond);
+
+    const QString modifiedFirst = QDir(root.path()).filePath("modified/zeta-old.txt");
+    const QString modifiedSecond = QDir(root.path()).filePath("modified/alpha-new.txt");
+    QVERIFY(writeSizedFile(modifiedFirst, 1));
+    QTest::qWait(30);
+    QVERIFY(writeSizedFile(modifiedSecond, 1));
+    QFile oldFile(modifiedFirst);
+    QFile newFile(modifiedSecond);
+    QVERIFY(oldFile.open(QIODevice::ReadWrite));
+    QVERIFY(newFile.open(QIODevice::ReadWrite));
+    QVERIFY(oldFile.setFileTime(QDateTime::currentDateTime().addDays(-2), QFileDevice::FileModificationTime));
+    QVERIFY(newFile.setFileTime(QDateTime::currentDateTime().addDays(-1), QFileDevice::FileModificationTime));
+    oldFile.close();
+    newFile.close();
+    checkPair(QDir(root.path()).filePath("modified"), QStringLiteral("modified"), modifiedFirst, modifiedSecond);
+
+    const QString createdFirst = QDir(root.path()).filePath("created/zeta-old.txt");
+    const QString createdSecond = QDir(root.path()).filePath("created/alpha-new.txt");
+    QVERIFY(writeSizedFile(createdFirst, 1));
+    QTest::qWait(30);
+    QVERIFY(writeSizedFile(createdSecond, 1));
+    checkPair(QDir(root.path()).filePath("created"), QStringLiteral("created"), createdFirst, createdSecond);
+}
+
+void FileBrowserWidgetTest::headerClickTogglesSortOrder() {
+    FileBrowserWidget browser;
+
+    browser.detailsView()->horizontalHeader()->sectionClicked(1);
+    QCOMPARE(browser.sortColumnKey(), QStringLiteral("size"));
+    QCOMPARE(browser.sortOrderKey(), QStringLiteral("ascending"));
+    browser.detailsView()->horizontalHeader()->sectionClicked(1);
+    QCOMPARE(browser.sortOrderKey(), QStringLiteral("descending"));
+}
+
+void FileBrowserWidgetTest::terminalActionUsesSelectedFileParentAndReportsFailure() {
+    QTemporaryDir root;
+    QVERIFY(root.isValid());
+    const QString filePath = QDir(root.path()).filePath("document.txt");
+    QFile file(filePath);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.close();
+
+    QString capturedDirectory;
+    FileBrowserWidget browser;
+    browser.setTerminalLauncherForTests([&](const QString &, const QStringList &, const QString &workingDirectory) {
+        capturedDirectory = workingDirectory;
+        return true;
+    });
+    QVERIFY(QMetaObject::invokeMethod(&browser, "openTargetInTerminal", Qt::DirectConnection, Q_ARG(QString, filePath)));
+    QCOMPARE(capturedDirectory, QFileInfo(root.path()).absoluteFilePath());
+
+    QSignalSpy errorSpy(&browser, &FileBrowserWidget::errorOccurred);
+    QSignalSpy refreshSpy(&browser, &FileBrowserWidget::directoryRefreshed);
+    browser.setTerminalLauncherForTests([](const QString &, const QStringList &, const QString &) {
+        return false;
+    });
+    QVERIFY(QMetaObject::invokeMethod(&browser, "openTargetInTerminal", Qt::DirectConnection, Q_ARG(QString, root.path())));
+    QCOMPARE(errorSpy.count(), 1);
+    QCOMPARE(refreshSpy.count(), 0);
 }
 
 void FileBrowserWidgetTest::gitMenuRequestedFromContextMenuCarriesTargetDetails_data() {
@@ -510,9 +804,9 @@ void FileBrowserWidgetTest::gitMenuRequestedFromContextMenuCarriesTargetDetails(
     QVERIFY(QTest::qWaitForWindowExposed(&browser));
     QVERIFY(browser.setCurrentPath(root.path()));
 
-    auto *model = qobject_cast<QFileSystemModel *>(browser.view()->model());
+    auto *model = browser.fileModel();
     QVERIFY(model != nullptr);
-    const QModelIndex fileIndex = model->index(filePath);
+    const QModelIndex fileIndex = browser.viewIndexForPath(filePath);
     QVERIFY(fileIndex.isValid());
     QTRY_VERIFY(browser.view()->visualRect(fileIndex).isValid());
 

@@ -37,6 +37,11 @@ class FileOperationServiceTest : public QObject {
 
 private slots:
     void copiesFilesBetweenTemporaryDirectories();
+    void createsEmptyTextFile();
+    void copiesWithAutoRenameWhenTargetExists();
+    void autoRenamePreservesExtensionlessFilesAndDirectories();
+    void autoRenameRollsBackPartialDirectoryCopy();
+    void rejectsInvalidAndExistingCreationTargets();
     void movesFilesBetweenTemporaryDirectories();
     void renamesAndCreatesFolders();
     void deletesToTrashViaPlatformService();
@@ -88,6 +93,108 @@ void FileOperationServiceTest::copiesFilesBetweenTemporaryDirectories() {
     const QString copiedPath = QDir(destinationDir.path()).filePath("document.txt");
     QVERIFY(QFileInfo::exists(sourcePath));
     QCOMPARE(readFile(copiedPath), QByteArray("copy me"));
+}
+
+void FileOperationServiceTest::createsEmptyTextFile() {
+    QTemporaryDir root;
+    QVERIFY(root.isValid());
+    FileOperationService service;
+    QString error;
+
+    QVERIFY2(service.createTextFile(root.path(), "notes.txt", &error), qPrintable(error));
+
+    const QString filePath = QDir(root.path()).filePath("notes.txt");
+    QVERIFY(QFileInfo::exists(filePath));
+    QVERIFY(QFileInfo(filePath).isFile());
+    QCOMPARE(QFileInfo(filePath).size(), qint64(0));
+}
+
+void FileOperationServiceTest::copiesWithAutoRenameWhenTargetExists() {
+    QTemporaryDir sourceDir;
+    QTemporaryDir destinationDir;
+    QVERIFY(sourceDir.isValid());
+    QVERIFY(destinationDir.isValid());
+    const QString sourcePath = QDir(sourceDir.path()).filePath("document.txt");
+    const QString existingPath = QDir(destinationDir.path()).filePath("document.txt");
+    QVERIFY2(writeFile(sourcePath, "source").isEmpty(), "source file should be written");
+    QVERIFY2(writeFile(existingPath, "existing").isEmpty(), "existing file should be written");
+
+    FileOperationService service;
+    QString error;
+    QVERIFY2(service.copyWithAutoRename({sourcePath}, destinationDir.path(), &error), qPrintable(error));
+
+    const QString copiedPath = QDir(destinationDir.path()).filePath("document (copy).txt");
+    QCOMPARE(readFile(existingPath), QByteArray("existing"));
+    QCOMPARE(readFile(copiedPath), QByteArray("source"));
+}
+
+void FileOperationServiceTest::autoRenamePreservesExtensionlessFilesAndDirectories() {
+    QTemporaryDir sourceRoot;
+    QTemporaryDir destinationRoot;
+    QVERIFY(sourceRoot.isValid());
+    QVERIFY(destinationRoot.isValid());
+    const QString extensionlessSource = QDir(sourceRoot.path()).filePath("README");
+    const QString extensionlessTarget = QDir(destinationRoot.path()).filePath("README");
+    QVERIFY2(writeFile(extensionlessSource, "source").isEmpty(), "extensionless source should be written");
+    QVERIFY2(writeFile(extensionlessTarget, "existing").isEmpty(), "extensionless target should be written");
+    const QString sourceDirectory = QDir(sourceRoot.path()).filePath("assets");
+    const QString targetDirectory = QDir(destinationRoot.path()).filePath("assets");
+    QVERIFY(QDir().mkdir(sourceDirectory));
+    QVERIFY(QDir().mkdir(targetDirectory));
+    QVERIFY2(writeFile(QDir(sourceDirectory).filePath("icon.txt"), "icon").isEmpty(), "directory source should be populated");
+
+    FileOperationService service;
+    QString error;
+    QVERIFY2(service.copyWithAutoRename({extensionlessSource, sourceDirectory}, destinationRoot.path(), &error), qPrintable(error));
+
+    QCOMPARE(readFile(QDir(destinationRoot.path()).filePath("README (copy)")), QByteArray("source"));
+    QVERIFY(QFileInfo(QDir(destinationRoot.path()).filePath("assets (copy)")).isDir());
+    QCOMPARE(readFile(QDir(destinationRoot.path()).filePath("assets (copy)/icon.txt")), QByteArray("icon"));
+}
+
+void FileOperationServiceTest::autoRenameRollsBackPartialDirectoryCopy() {
+#if !defined(Q_OS_UNIX)
+    QSKIP("Permission-based partial-copy rollback is only deterministic on Unix.");
+#else
+    QTemporaryDir sourceRoot;
+    QTemporaryDir destinationRoot;
+    QVERIFY(sourceRoot.isValid());
+    QVERIFY(destinationRoot.isValid());
+
+    const QString sourceDirectory = QDir(sourceRoot.path()).filePath("assets");
+    QVERIFY(QDir().mkdir(sourceDirectory));
+    QVERIFY2(writeFile(QDir(sourceDirectory).filePath("a-readable.txt"), "readable").isEmpty(), "readable source should be written");
+    const QString unreadablePath = QDir(sourceDirectory).filePath("b-unreadable.txt");
+    QVERIFY2(writeFile(unreadablePath, "unreadable").isEmpty(), "unreadable source should be written");
+    QFile unreadableFile(unreadablePath);
+    QVERIFY(unreadableFile.setPermissions(QFileDevice::Permissions()));
+
+    FileOperationService service;
+    QString error;
+    QVERIFY(!service.copyWithAutoRename({sourceDirectory}, destinationRoot.path(), &error));
+    QVERIFY2(!QFileInfo::exists(QDir(destinationRoot.path()).filePath("assets")), "failed copy must not leave a partial target");
+    QVERIFY2(!QFileInfo::exists(QDir(destinationRoot.path()).filePath("assets (copy)")), "failed auto-renamed copy must not leave a partial target");
+
+    unreadableFile.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner);
+#endif
+}
+
+void FileOperationServiceTest::rejectsInvalidAndExistingCreationTargets() {
+    QTemporaryDir root;
+    QVERIFY(root.isValid());
+    FileOperationService service;
+    QString error;
+
+    QVERIFY(!service.createFolder(root.path(), QStringLiteral("  "), &error));
+    QVERIFY(error.contains(QStringLiteral("Invalid folder name")));
+    QVERIFY(!service.createTextFile(root.path(), QStringLiteral("bad/name.txt"), &error));
+    QVERIFY(error.contains(QStringLiteral("Invalid file name")));
+    QVERIFY2(service.createTextFile(root.path(), QStringLiteral("notes.txt"), &error), qPrintable(error));
+    QVERIFY(!service.createTextFile(root.path(), QStringLiteral("notes.txt"), &error));
+    QVERIFY(error.contains(QStringLiteral("Could not create text file")));
+    QVERIFY2(service.createFolder(root.path(), QStringLiteral("folder"), &error), qPrintable(error));
+    QVERIFY(!service.createFolder(root.path(), QStringLiteral("folder"), &error));
+    QVERIFY(error.contains(QStringLiteral("Could not create folder")));
 }
 
 void FileOperationServiceTest::movesFilesBetweenTemporaryDirectories() {

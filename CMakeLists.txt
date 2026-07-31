@@ -22,6 +22,8 @@ add_library(filemanager_ui STATIC
     src/MainWindow.h
     src/models/FavoritesModel.cpp
     src/models/FavoritesModel.h
+    src/models/FileSystemSortProxyModel.cpp
+    src/models/FileSystemSortProxyModel.h
     src/models/FileMetadata.cpp
     src/models/FileMetadata.h
     src/ui/FavoritesSidebar.cpp
@@ -38,6 +40,10 @@ add_library(filemanager_ui STATIC
     src/services/SearchService.h
     src/services/GitService.cpp
     src/services/GitService.h
+    src/services/ThemeManager.cpp
+    src/services/ThemeManager.h
+    src/services/TerminalService.cpp
+    src/services/TerminalService.h
     src/ui/FileBrowserWidget.cpp
     src/ui/FileBrowserWidget.h
     src/ui/TabStrip.cpp

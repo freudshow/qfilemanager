@@ -113,6 +113,23 @@ bool readVersion(const QJsonObject &root, AppSettings &settings, QString *errorM
     return true;
 }
 
+bool readTheme(const QJsonObject &root, AppSettings &settings, QString *errorMessage) {
+    const QJsonValue themeValue = root.value("theme");
+    if (themeValue.isUndefined()) {
+        return true;
+    }
+    if (!themeValue.isString()) {
+        setError(errorMessage, "Invalid settings: theme must be a string.");
+        return false;
+    }
+
+    settings.theme = themeValue.toString().trimmed().toLower();
+    if (settings.theme.isEmpty()) {
+        settings.theme = QStringLiteral("aurora");
+    }
+    return true;
+}
+
 bool readWindowObject(const QJsonObject &root, AppSettings &settings, QString *errorMessage) {
     const QJsonValue windowValue = root.value("window");
     if (windowValue.isUndefined()) {
@@ -263,7 +280,7 @@ bool readOptions(const QJsonObject &root, AppSettings &settings, QString *errorM
 
 bool readSettingsObject(const QJsonObject &root, AppSettings &settings, QString *errorMessage) {
     settings = AppSettings{};
-    return readVersion(root, settings, errorMessage) && readWindowObject(root, settings, errorMessage) && readTabs(root, settings, errorMessage)
+    return readVersion(root, settings, errorMessage) && readTheme(root, settings, errorMessage) && readWindowObject(root, settings, errorMessage) && readTabs(root, settings, errorMessage)
         && readFavorites(root, settings, errorMessage) && readOpenWithDefaults(root, settings, errorMessage) && readOptions(root, settings, errorMessage);
 }
 
@@ -329,6 +346,7 @@ bool SettingsStore::save(const AppSettings &settings, QString *errorMessage) {
 
     QJsonObject root;
     root["version"] = settings.version;
+    root["theme"] = settings.theme;
     root["window"] = window;
     root["tabs"] = tabsToJson(settings.tabs);
     root["favorites"] = favoritesToJson(settings.favorites);

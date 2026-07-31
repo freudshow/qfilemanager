@@ -40,6 +40,8 @@ private slots:
     void openWithDefaultsRestorePersistAndPropagateAcrossTabs();
     void toolbarControlsActiveTabAndSynchronizesHistory();
     void toolbarViewActionsSynchronizeWithActiveTab();
+    void toolbarThemesMenuOffersThreeSelectableThemes();
+    void selectingThemePersistsImmediately();
     void addsGitSubmenuOnlyForRepositoryTargets();
     void gitMenuShowsDirtyStateAndUsesTargetPathspec();
     void gitMenuActionsUseSafeArgumentsAndCancelledCommandsDoNotRun();
@@ -294,9 +296,9 @@ void MainWindowTest::metadataPanelUpdatesFromCurrentBrowserSelection() {
     auto *metadataPanel = findMetadataPanel(window);
     QVERIFY(metadataPanel != nullptr);
 
-    auto *model = qobject_cast<QFileSystemModel *>(browser->view()->model());
+    auto *model = browser->fileModel();
     QVERIFY(model != nullptr);
-    const QModelIndex fileIndex = model->index(filePath);
+    const QModelIndex fileIndex = browser->viewIndexForPath(filePath);
     QVERIFY(fileIndex.isValid());
 
     browser->view()->selectionModel()->select(fileIndex, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
@@ -423,6 +425,43 @@ void MainWindowTest::toolbarViewActionsSynchronizeWithActiveTab() {
     tabWidget->setCurrentWidget(browser);
     QCOMPARE(browser->viewMode(), FileBrowserWidget::ViewMode::Tiles);
     QVERIFY(tiles->isChecked());
+}
+
+void MainWindowTest::toolbarThemesMenuOffersThreeSelectableThemes() {
+    MainWindow window;
+
+    auto *themesMenu = window.findChild<QMenu *>("themesMenu");
+    auto *skinsMenu = window.findChild<QMenu *>("skinsMenu");
+    QVERIFY(themesMenu != nullptr);
+    QVERIFY(skinsMenu != nullptr);
+    QCOMPARE(themesMenu->title(), QStringLiteral("Themes"));
+    QCOMPARE(skinsMenu->title(), QStringLiteral("Skins"));
+
+    const QStringList themeNames = skinsMenu->actions().value(0)->text().isEmpty()
+        ? QStringList()
+        : QStringList({skinsMenu->actions().at(0)->text(), skinsMenu->actions().at(1)->text(), skinsMenu->actions().at(2)->text()});
+    QCOMPARE(themeNames, QStringList({QStringLiteral("Aurora Garden"), QStringLiteral("Graphite Ember"), QStringLiteral("Clearwater")}));
+    QVERIFY(skinsMenu->actions().at(0)->isCheckable());
+    QVERIFY(skinsMenu->actions().at(0)->isChecked());
+
+    skinsMenu->actions().at(1)->trigger();
+    QVERIFY(skinsMenu->actions().at(1)->isChecked());
+    QVERIFY(!skinsMenu->actions().at(0)->isChecked());
+}
+
+void MainWindowTest::selectingThemePersistsImmediately() {
+    MainWindow window;
+
+    auto *skinsMenu = window.findChild<QMenu *>("skinsMenu");
+    QVERIFY(skinsMenu != nullptr);
+    QCOMPARE(skinsMenu->actions().size(), 3);
+    skinsMenu->actions().at(1)->trigger();
+
+    AppSettings loaded;
+    SettingsStore store;
+    QString error;
+    QVERIFY2(store.load(loaded, &error), qPrintable(error));
+    QCOMPARE(loaded.theme, QStringLiteral("graphite"));
 }
 
 void MainWindowTest::addsGitSubmenuOnlyForRepositoryTargets() {

@@ -4,6 +4,7 @@
 #include "models/FavoritesModel.h"
 #include "services/SettingsStore.h"
 #include "services/GitService.h"
+#include "services/ThemeManager.h"
 #include "services/TabManager.h"
 #include "ui/FileBrowserWidget.h"
 #include "ui/FavoritesSidebar.h"
@@ -14,6 +15,7 @@
 #include <QTabWidget>
 #include <QAction>
 #include <QActionGroup>
+#include <QApplication>
 #include <QCloseEvent>
 #include <QDir>
 #include <QFileInfo>
@@ -25,6 +27,7 @@
 #include <QStyle>
 #include <QTextEdit>
 #include <QToolBar>
+#include <QToolButton>
 #include <QVBoxLayout>
 #include <QWidget>
 
@@ -61,6 +64,22 @@ MainWindow::MainWindow(QWidget *parent)
         action->setCheckable(true);
         viewModeActionGroup_->addAction(action);
     }
+
+    auto *toolbarSpacer = new QWidget(this);
+    toolbarSpacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+    toolbar_->addWidget(toolbarSpacer);
+    auto *themesButton = new QToolButton(this);
+    themesButton->setObjectName("themesToolButton");
+    themesButton->setText(tr("Themes"));
+    themesButton->setPopupMode(QToolButton::InstantPopup);
+    toolbar_->addWidget(themesButton);
+    themesMenu_ = new QMenu(tr("Themes"), this);
+    themesMenu_->setObjectName("themesMenu");
+    skinsMenu_ = themesMenu_->addMenu(tr("Skins"));
+    skinsMenu_->setObjectName("skinsMenu");
+    themesButton->setMenu(themesMenu_);
+    themeActionGroup_ = new QActionGroup(this);
+    themeActionGroup_->setExclusive(true);
 
     connect(backAction_, &QAction::triggered, this, [this] {
         if (FileBrowserWidget *browser = currentBrowser()) {
@@ -100,6 +119,8 @@ MainWindow::MainWindow(QWidget *parent)
     AppSettings settings;
     SettingsStore store;
     store.load(settings);
+    setupThemesMenu(settings.theme);
+    applyTheme(settings.theme, false);
     favoritesModel_->setFavorites(settings.favorites);
     tabManager_->setOpenWithDefaults(settings.openWithDefaults);
     tabManager_->restoreTabs(settings);
@@ -139,6 +160,44 @@ MainWindow::MainWindow(QWidget *parent)
 
     layout->addWidget(splitter_);
     setCentralWidget(workspace);
+}
+
+void MainWindow::setupThemesMenu(const QString &themeName) {
+    if (skinsMenu_ == nullptr || themeActionGroup_ == nullptr) {
+        return;
+    }
+
+    qDeleteAll(skinsMenu_->actions());
+    themeActionGroup_->setExclusive(true);
+    const ThemeManager::Theme activeTheme = ThemeManager::fromName(themeName);
+    const QList<ThemeManager::Theme> themes = {ThemeManager::Theme::Aurora, ThemeManager::Theme::Graphite, ThemeManager::Theme::Clearwater};
+    for (const ThemeManager::Theme theme : themes) {
+        QAction *action = skinsMenu_->addAction(ThemeManager::displayName(theme));
+        action->setCheckable(true);
+        action->setChecked(theme == activeTheme);
+        themeActionGroup_->addAction(action);
+        connect(action, &QAction::triggered, this, [this, theme] {
+            applyTheme(ThemeManager::name(theme));
+        });
+    }
+}
+
+void MainWindow::applyTheme(const QString &themeName, bool persist) {
+    const ThemeManager::Theme theme = ThemeManager::fromName(themeName);
+    themeName_ = ThemeManager::name(theme);
+    if (QApplication *application = qobject_cast<QApplication *>(QCoreApplication::instance())) {
+        application->setStyleSheet(ThemeManager::styleSheet(theme));
+    }
+    if (skinsMenu_ != nullptr) {
+        const QList<QAction *> actions = skinsMenu_->actions();
+        const QList<ThemeManager::Theme> themes = {ThemeManager::Theme::Aurora, ThemeManager::Theme::Graphite, ThemeManager::Theme::Clearwater};
+        for (int i = 0; i < actions.size() && i < themes.size(); ++i) {
+            actions.at(i)->setChecked(themes.at(i) == theme);
+        }
+    }
+    if (persist) {
+        saveSettings();
+    }
 }
 
 void MainWindow::closeEvent(QCloseEvent *event) {
@@ -191,6 +250,7 @@ AppSettings MainWindow::collectSettings() const {
         settings.splitterSizes = QVector<int>(sizes.begin(), sizes.end());
     }
     settings.tabs = tabManager_ == nullptr ? QVector<TabState>() : tabManager_->tabStates();
+    settings.theme = themeName_;
     settings.favorites = favoritesModel_->favorites();
     if (tabManager_ != nullptr && tabManager_->count() > 0 && tabManager_->browserAt(0) != nullptr) {
         settings.openWithDefaults = tabManager_->browserAt(0)->openWithDefaults();

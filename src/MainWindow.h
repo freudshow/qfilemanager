@@ -8,6 +8,7 @@
 
 class QSplitter;
 class QToolBar;
+class QToolButton;
 class QAction;
 class QActionGroup;
 class GitService;
@@ -48,6 +49,8 @@ private:
     void runGitAction(const QString &title, const QString &repositoryRoot, const QStringList &arguments, bool requiresConfirmation, QMenu *gitMenu);
     void showGitOutput(const QString &title, const GitCommandResult &result, const QString &emptyMessage = QString());
     void switchGitBranch(const QString &repositoryRoot, QMenu *gitMenu);
+    void applyTheme(const QString &themeName, bool persist = true);
+    void setupThemesMenu(const QString &themeName);
 
     friend class MainWindowTest;
 
@@ -62,6 +65,10 @@ private:
     QAction *listViewAction_ = nullptr;
     QAction *tilesViewAction_ = nullptr;
     QActionGroup *viewModeActionGroup_ = nullptr;
+    QMenu *themesMenu_ = nullptr;
+    QMenu *skinsMenu_ = nullptr;
+    QActionGroup *themeActionGroup_ = nullptr;
+    QString themeName_ = QStringLiteral("aurora");
     GitService *gitService_ = nullptr;
     ConfirmationProvider confirmationProvider_;
     BranchPicker branchPicker_;

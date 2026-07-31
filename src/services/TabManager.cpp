@@ -72,7 +72,11 @@ void TabManager::restoreTabs(const AppSettings &settings) {
     bool restoredAny = false;
     for (const TabState &tab : settings.tabs) {
         if (QFileInfo(tab.path).isDir()) {
-            addTab(tab.path);
+            FileBrowserWidget *browser = addTab(tab.path);
+            if (browser != nullptr) {
+                browser->setSort(tab.sortColumn.isEmpty() ? QStringLiteral("name") : tab.sortColumn,
+                                 tab.sortOrder == QStringLiteral("descending") ? Qt::DescendingOrder : Qt::AscendingOrder);
+            }
             restoredAny = true;
         }
     }
@@ -101,7 +105,7 @@ QVector<TabState> TabManager::tabStates() const {
     for (int i = 0; i < tabWidget_->count(); ++i) {
         auto *browser = qobject_cast<FileBrowserWidget *>(tabWidget_->widget(i));
         if (browser != nullptr) {
-            states.append({browser->currentPath(), QStringLiteral("name"), QStringLiteral("ascending")});
+            states.append({browser->currentPath(), browser->sortColumnKey(), browser->sortOrderKey()});
         }
     }
     return states;

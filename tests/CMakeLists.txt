@@ -38,6 +38,14 @@ target_link_libraries(filemanager_file_operations_test PRIVATE Qt6::Core Qt6::Gu
 add_test(NAME FileOperationServiceTest COMMAND filemanager_file_operations_test)
 set_tests_properties(FileOperationServiceTest PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+add_executable(filemanager_terminal_service_test test_terminal_service.cpp)
+target_link_libraries(filemanager_terminal_service_test PRIVATE Qt6::Core Qt6::Test filemanager_ui)
+add_test(NAME TerminalServiceTest COMMAND filemanager_terminal_service_test)
+
+add_executable(filemanager_theme_manager_test test_theme_manager.cpp)
+target_link_libraries(filemanager_theme_manager_test PRIVATE Qt6::Core Qt6::Test filemanager_ui)
+add_test(NAME ThemeManagerTest COMMAND filemanager_theme_manager_test)
+
 add_executable(filemanager_restore_test test_restore.cpp)
 target_link_libraries(filemanager_restore_test PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Test filemanager_ui)
 add_test(NAME RestoreTest COMMAND filemanager_restore_test)

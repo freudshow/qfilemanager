@@ -18,6 +18,7 @@ struct FavoriteState {
 
 struct AppSettings {
     int version = 1;
+    QString theme = QStringLiteral("aurora");
     QByteArray windowGeometry;
     QByteArray windowState;
     QVector<int> splitterSizes;

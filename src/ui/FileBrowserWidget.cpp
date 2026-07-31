@@ -1,6 +1,14 @@
 #include "ui/FileBrowserWidget.h"
 
+#include "models/FileSystemSortProxyModel.h"
+#include "services/FileOperationService.h"
+#include "services/PlatformServices.h"
+#include "services/TerminalService.h"
+
 #include <QAbstractItemView>
+#include <QActionGroup>
+#include <QApplication>
+#include <QClipboard>
 #include <QDesktopServices>
 #include <QDir>
 #include <QEvent>
@@ -8,13 +16,17 @@
 #include <QFileInfo>
 #include <QFileSystemModel>
 #include <QFileSystemWatcher>
+#include <QGuiApplication>
+#include <QHeaderView>
 #include <QHBoxLayout>
+#include <QInputDialog>
 #include <QItemSelectionModel>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListView>
 #include <QMenu>
+#include <QMimeData>
 #include <QProcess>
 #include <QShortcut>
 #include <QStackedWidget>
@@ -27,11 +39,59 @@
 namespace {
 
 void configureFileView(QAbstractItemView *view) {
+    view->setSelectionBehavior(QAbstractItemView::SelectRows);
     view->setDragEnabled(true);
     view->setAcceptDrops(true);
     view->setDropIndicatorShown(true);
     view->setDragDropMode(QAbstractItemView::DragDrop);
     view->setContextMenuPolicy(Qt::CustomContextMenu);
+}
+
+FileSystemSortProxyModel::SortColumn sortColumnForKey(const QString &key) {
+    if (key == QStringLiteral("type")) {
+        return FileSystemSortProxyModel::SortColumn::Type;
+    }
+    if (key == QStringLiteral("size")) {
+        return FileSystemSortProxyModel::SortColumn::Size;
+    }
+    if (key == QStringLiteral("modified")) {
+        return FileSystemSortProxyModel::SortColumn::Modified;
+    }
+    if (key == QStringLiteral("created")) {
+        return FileSystemSortProxyModel::SortColumn::Created;
+    }
+    return FileSystemSortProxyModel::SortColumn::Name;
+}
+
+QString keyForSortColumn(FileSystemSortProxyModel::SortColumn column) {
+    switch (column) {
+    case FileSystemSortProxyModel::SortColumn::Type:
+        return QStringLiteral("type");
+    case FileSystemSortProxyModel::SortColumn::Size:
+        return QStringLiteral("size");
+    case FileSystemSortProxyModel::SortColumn::Modified:
+        return QStringLiteral("modified");
+    case FileSystemSortProxyModel::SortColumn::Created:
+        return QStringLiteral("created");
+    case FileSystemSortProxyModel::SortColumn::Name:
+    default:
+        return QStringLiteral("name");
+    }
+}
+
+QStringList localClipboardPaths() {
+    const QMimeData *mimeData = QGuiApplication::clipboard()->mimeData();
+    if (mimeData == nullptr || !mimeData->hasUrls()) {
+        return {};
+    }
+
+    QStringList paths;
+    for (const QUrl &url : mimeData->urls()) {
+        if (url.isLocalFile()) {
+            paths.append(url.toLocalFile());
+        }
+    }
+    return paths;
 }
 
 }
@@ -46,10 +106,16 @@ FileBrowserWidget::FileBrowserWidget(QWidget *parent)
     , addressBar_(new QLineEdit(this))
     , breadcrumbContainer_(new QWidget(this))
     , focusAddressShortcut_(new QShortcut(QKeySequence(QStringLiteral("Ctrl+L")), this))
+    , copyShortcut_(new QShortcut(QKeySequence::Copy, this))
+    , pasteShortcut_(new QShortcut(QKeySequence::Paste, this))
     , upButton_(new QToolButton(this))
     , refreshButton_(new QToolButton(this))
     , directoryWatcher_(new QFileSystemWatcher(this))
     , refreshTimer_(new QTimer(this)) {
+    ownedPlatformServices_ = std::make_unique<PlatformServices>();
+    platformServicesForTests_ = ownedPlatformServices_.get();
+    fileOperationService_ = std::make_unique<FileOperationService>(platformServicesForTests_);
+    terminalService_ = std::make_unique<TerminalService>();
     openWithLauncher_ = [](const QString &program, const QStringList &arguments) {
         return QProcess::startDetached(program, arguments);
     };
@@ -80,28 +146,24 @@ FileBrowserWidget::FileBrowserWidget(QWidget *parent)
     addressBar_->installEventFilter(this);
     addressLayout->addWidget(breadcrumbContainer_, 1);
     addressLayout->addWidget(addressBar_, 1);
-    addressContainer->setStyleSheet(QStringLiteral(
-        "QWidget#addressBarContainer { background: #f6f8fb; border: 1px solid #d7dee8; border-radius: 10px; }"
-        "QLineEdit#addressBar { background: white; border: 1px solid #c8d2df; border-radius: 8px; padding: 6px 10px; }"
-        "QToolButton#upButton, QToolButton#refreshButton { background: #ffffff; border: 1px solid #c8d2df; border-radius: 8px; padding: 5px 10px; }"
-        "QToolButton#upButton:hover, QToolButton#refreshButton:hover { background: #eaf1f8; }"));
-
     model_->setFilter(QDir::AllEntries | QDir::NoDotAndDotDot | QDir::AllDirs);
     model_->setRootPath(QDir::rootPath());
+    sortModel_ = new FileSystemSortProxyModel(this);
+    sortModel_->setSourceModel(model_);
     detailsView_->setObjectName("fileBrowserDetailsView");
     listView_->setObjectName("fileBrowserListView");
     tilesView_->setObjectName("fileBrowserTilesView");
 
-    detailsView_->setModel(model_);
+    detailsView_->setModel(sortModel_);
     detailsView_->setSortingEnabled(true);
     configureFileView(detailsView_);
 
-    listView_->setModel(model_);
+    listView_->setModel(sortModel_);
     listView_->setViewMode(QListView::ListMode);
     listView_->setUniformItemSizes(true);
     configureFileView(listView_);
 
-    tilesView_->setModel(model_);
+    tilesView_->setModel(sortModel_);
     tilesView_->setViewMode(QListView::IconMode);
     tilesView_->setIconSize(QSize(48, 48));
     tilesView_->setGridSize(QSize(140, 84));
@@ -138,7 +200,31 @@ FileBrowserWidget::FileBrowserWidget(QWidget *parent)
     connectView(detailsView_);
     connectView(listView_);
     connectView(tilesView_);
+    copyShortcut_->setContext(Qt::WidgetWithChildrenShortcut);
+    pasteShortcut_->setContext(Qt::WidgetWithChildrenShortcut);
+    connect(copyShortcut_, &QShortcut::activated, this, [this] {
+        if (addressBar_->hasFocus()) {
+            return;
+        }
+        copySelectionToClipboard();
+    });
+    connect(pasteShortcut_, &QShortcut::activated, this, [this] {
+        if (addressBar_->hasFocus()) {
+            return;
+        }
+        pasteFromClipboard();
+    });
+    connect(detailsView_->horizontalHeader(), &QHeaderView::sectionClicked, this, [this](int section) {
+        const QString key = section == 1 ? QStringLiteral("size")
+            : section == 2 ? QStringLiteral("type")
+            : section == 3 ? QStringLiteral("modified") : QStringLiteral("name");
+        const Qt::SortOrder order = key == sortColumnKey_ && sortOrder_ == Qt::AscendingOrder
+            ? Qt::DescendingOrder : Qt::AscendingOrder;
+        setSort(key, order);
+    });
 }
+
+FileBrowserWidget::~FileBrowserWidget() = default;
 
 QString FileBrowserWidget::currentPath() const {
     return currentPath_;
@@ -185,9 +271,10 @@ bool FileBrowserWidget::goForward() {
 }
 
 void FileBrowserWidget::updateViewRoots(const QModelIndex &rootIndex) {
-    detailsView_->setRootIndex(rootIndex);
-    listView_->setRootIndex(rootIndex);
-    tilesView_->setRootIndex(rootIndex);
+    const QModelIndex viewRoot = toViewIndex(rootIndex);
+    detailsView_->setRootIndex(viewRoot);
+    listView_->setRootIndex(viewRoot);
+    tilesView_->setRootIndex(viewRoot);
 }
 
 bool FileBrowserWidget::applyPath(const QString &path, bool recordHistory) {
@@ -274,7 +361,7 @@ void FileBrowserWidget::setViewMode(ViewMode mode) {
     }
     viewStack_->setCurrentWidget(target);
     if (!currentPath_.isEmpty()) {
-        target->setRootIndex(model_->index(currentPath_));
+        target->setRootIndex(viewIndexForPath(currentPath_));
     }
     emit viewModeChanged(viewMode_);
 }
@@ -299,6 +386,29 @@ QTableView *FileBrowserWidget::view() const {
     return detailsView_;
 }
 
+QFileSystemModel *FileBrowserWidget::fileModel() const {
+    return model_;
+}
+
+QModelIndex FileBrowserWidget::viewIndexForPath(const QString &path) const {
+    return toViewIndex(model_->index(path));
+}
+
+QString FileBrowserWidget::sortColumnKey() const {
+    return sortColumnKey_;
+}
+
+QString FileBrowserWidget::sortOrderKey() const {
+    return sortOrder_ == Qt::DescendingOrder ? QStringLiteral("descending") : QStringLiteral("ascending");
+}
+
+void FileBrowserWidget::setSort(const QString &column, Qt::SortOrder order) {
+    sortColumnKey_ = keyForSortColumn(sortColumnForKey(column));
+    sortOrder_ = order;
+    sortModel_->setSortColumn(sortColumnForKey(sortColumnKey_));
+    sortModel_->sort(0, sortOrder_);
+}
+
 void FileBrowserWidget::setOpenWithDefaults(const QHash<QString, QString> &defaults) {
     openWithDefaults_.clear();
     for (auto it = defaults.cbegin(); it != defaults.cend(); ++it) {
@@ -316,6 +426,24 @@ QHash<QString, QString> FileBrowserWidget::openWithDefaults() const {
 
 void FileBrowserWidget::setOpenWithLauncherForTests(OpenWithLauncher launcher) {
     openWithLauncher_ = std::move(launcher);
+}
+
+void FileBrowserWidget::setTerminalLauncherForTests(TerminalLauncher launcher) {
+    terminalLauncher_ = launcher;
+    if (terminalService_ != nullptr) {
+        terminalService_->setLauncher(std::move(launcher));
+    }
+}
+
+void FileBrowserWidget::setPlatformServicesForTests(PlatformServices *platformServices) {
+    fileOperationService_.reset();
+    ownedPlatformServices_.reset();
+    platformServicesForTests_ = platformServices;
+    if (platformServicesForTests_ == nullptr) {
+        ownedPlatformServices_ = std::make_unique<PlatformServices>();
+        platformServicesForTests_ = ownedPlatformServices_.get();
+    }
+    fileOperationService_ = std::make_unique<FileOperationService>(platformServicesForTests_);
 }
 
 void FileBrowserWidget::navigateFromAddressBar() {
@@ -409,7 +537,8 @@ void FileBrowserWidget::openIndex(const QModelIndex &index) {
         return;
     }
 
-    const QString path = model_->filePath(index);
+    const QModelIndex sourceIndex = toSourceIndex(index);
+    const QString path = model_->filePath(sourceIndex);
     const QFileInfo info(path);
     if (info.isDir()) {
         setCurrentPath(path);
@@ -467,7 +596,7 @@ void FileBrowserWidget::emitSelectedPath(const QItemSelection &selected, const Q
         return;
     }
 
-    const QString path = model_->filePath(indexes.first());
+    const QString path = model_->filePath(toSourceIndex(indexes.first()));
     if (!path.isEmpty()) {
         emit selectedPathChanged(path);
     }
@@ -476,15 +605,23 @@ void FileBrowserWidget::emitSelectedPath(const QItemSelection &selected, const Q
 void FileBrowserWidget::showContextMenu(const QPoint &position) {
     QAbstractItemView *view = activeView();
     const QModelIndex index = view->indexAt(position);
-    const QString path = index.isValid() ? model_->filePath(index) : currentPath_;
+    const QModelIndex sourceIndex = toSourceIndex(index);
+    const QString path = sourceIndex.isValid() ? model_->filePath(sourceIndex) : currentPath_;
     const QFileInfo info(path);
+    const bool clickedIndexIsSelected = index.isValid() && view->selectionModel() != nullptr && view->selectionModel()->isSelected(index);
 
     QMenu menu(this);
+    menu.setObjectName("fileContextMenu");
     QAction *openAction = menu.addAction(tr("Open"));
+    openAction->setObjectName("openAction");
     QAction *openInNewTabAction = menu.addAction(tr("Open in New Tab"));
+    openInNewTabAction->setObjectName("openInNewTabAction");
     QAction *openWithAction = menu.addAction(tr("Open With..."));
+    openWithAction->setObjectName("openWithAction");
     QAction *setDefaultAppAction = menu.addAction(tr("Set Default App for This Type..."));
+    setDefaultAppAction->setObjectName("setDefaultAppAction");
     QAction *clearDefaultAppAction = menu.addAction(tr("Clear Default App for This Type"));
+    clearDefaultAppAction->setObjectName("clearDefaultAppAction");
     const QString extension = extensionForPath(path);
     const bool isFile = index.isValid() && info.isFile();
     openAction->setEnabled(index.isValid());
@@ -493,13 +630,69 @@ void FileBrowserWidget::showContextMenu(const QPoint &position) {
     setDefaultAppAction->setEnabled(isFile && !extension.isEmpty());
     clearDefaultAppAction->setEnabled(isFile && openWithDefaults_.contains(extension));
     menu.addSeparator();
-    menu.addAction(tr("Copy"));
-    menu.addAction(tr("Move"));
-    menu.addAction(tr("Rename"));
-    menu.addAction(tr("Delete to Trash"));
+    QAction *copyAction = menu.addAction(tr("Copy"));
+    copyAction->setObjectName("copyAction");
+    copyAction->setEnabled(index.isValid());
+    QAction *pasteAction = menu.addAction(tr("Paste"));
+    pasteAction->setObjectName("pasteAction");
+    pasteAction->setEnabled(!localClipboardPaths().isEmpty());
+    QAction *moveAction = menu.addAction(tr("Move"));
+    moveAction->setObjectName("moveAction");
+    QAction *renameAction = menu.addAction(tr("Rename"));
+    renameAction->setObjectName("renameAction");
+    QAction *deleteAction = menu.addAction(tr("Delete to Trash"));
+    deleteAction->setObjectName("deleteAction");
     menu.addSeparator();
-    menu.addAction(tr("New Folder"));
-    menu.addAction(tr("Properties"));
+    QMenu *sortMenu = menu.addMenu(tr("Sort by"));
+    sortMenu->setObjectName("sortMenu");
+    QActionGroup *sortGroup = new QActionGroup(sortMenu);
+    sortGroup->setExclusive(true);
+    const QList<QPair<QString, QString>> sortOptions = {
+        {QStringLiteral("name"), tr("Name")}, {QStringLiteral("type"), tr("Type")},
+        {QStringLiteral("size"), tr("Size")}, {QStringLiteral("modified"), tr("Modified Time")},
+        {QStringLiteral("created"), tr("Creation Time")}
+    };
+    for (const auto &[key, label] : sortOptions) {
+        QAction *action = sortMenu->addAction(label);
+        action->setObjectName(QStringLiteral("sortBy%1Action").arg(label.simplified().remove(QLatin1Char(' '))));
+        action->setCheckable(true);
+        action->setChecked(sortColumnKey_ == key);
+        sortGroup->addAction(action);
+        connect(action, &QAction::triggered, this, [this, key] { setSort(key, sortOrder_); });
+    }
+    QMenu *orderMenu = menu.addMenu(tr("Sort Order"));
+    orderMenu->setObjectName("sortOrderMenu");
+    QActionGroup *orderGroup = new QActionGroup(orderMenu);
+    orderGroup->setExclusive(true);
+    QAction *ascendingAction = orderMenu->addAction(tr("Ascending"));
+    ascendingAction->setObjectName("ascendingSortAction");
+    ascendingAction->setCheckable(true);
+    ascendingAction->setChecked(sortOrder_ == Qt::AscendingOrder);
+    orderGroup->addAction(ascendingAction);
+    QAction *descendingAction = orderMenu->addAction(tr("Descending"));
+    descendingAction->setObjectName("descendingSortAction");
+    descendingAction->setCheckable(true);
+    descendingAction->setChecked(sortOrder_ == Qt::DescendingOrder);
+    orderGroup->addAction(descendingAction);
+    connect(ascendingAction, &QAction::triggered, this, [this] { setSort(sortColumnKey_, Qt::AscendingOrder); });
+    connect(descendingAction, &QAction::triggered, this, [this] { setSort(sortColumnKey_, Qt::DescendingOrder); });
+
+    QMenu *newMenu = menu.addMenu(tr("New"));
+    newMenu->setObjectName("newMenu");
+    QAction *newFolderAction = newMenu->addAction(tr("New Folder"));
+    newFolderAction->setObjectName("newFolderAction");
+    QAction *newTextFileAction = newMenu->addAction(tr("New Text File"));
+    newTextFileAction->setObjectName("newTextFileAction");
+    moveAction->setEnabled(index.isValid());
+    renameAction->setEnabled(index.isValid());
+    deleteAction->setEnabled(index.isValid());
+    const QString targetDirectory = info.isDir() && index.isValid() ? path : currentPath_;
+    QAction *openInTerminalAction = menu.addAction(tr("Open in Terminal"));
+    openInTerminalAction->setObjectName("openInTerminalAction");
+    openInTerminalAction->setEnabled(!targetDirectory.isEmpty() && QFileInfo(targetDirectory).isDir());
+    QAction *propertiesAction = menu.addAction(tr("Properties"));
+    propertiesAction->setObjectName("propertiesAction");
+    propertiesAction->setEnabled(index.isValid());
     menu.addSeparator();
     emit gitMenuRequested(&menu, path, !index.isValid());
     QAction *selectedAction = menu.exec(view->viewport()->mapToGlobal(position));
@@ -523,5 +716,187 @@ void FileBrowserWidget::showContextMenu(const QPoint &position) {
         if (openWithDefaults_.remove(extension) > 0) {
             emit openWithDefaultsChanged(openWithDefaults_);
         }
+    } else if (selectedAction == copyAction && index.isValid()) {
+        copySelectionToClipboard(path, clickedIndexIsSelected);
+    } else if (selectedAction == pasteAction) {
+        pasteFromClipboard(targetDirectory);
+    } else if (selectedAction == newFolderAction) {
+        createFolderFromMenu(targetDirectory);
+    } else if (selectedAction == newTextFileAction) {
+        createTextFileFromMenu(targetDirectory);
+    } else if (selectedAction == openInTerminalAction) {
+        openTargetInTerminal(targetDirectory);
+    } else if (selectedAction == moveAction && index.isValid()) {
+        movePathFromMenu(path);
+    } else if (selectedAction == renameAction && index.isValid()) {
+        renamePathFromMenu(path);
+    } else if (selectedAction == deleteAction && index.isValid()) {
+        deletePathsFromMenu(path, clickedIndexIsSelected);
+    } else if (selectedAction == propertiesAction && index.isValid()) {
+        showPropertiesFromMenu(path);
     }
+}
+
+QStringList FileBrowserWidget::selectedPaths() const {
+    QAbstractItemView *view = activeView();
+    if (view == nullptr || view->selectionModel() == nullptr) {
+        return {};
+    }
+
+    QStringList paths;
+    for (const QModelIndex &index : view->selectionModel()->selectedRows()) {
+        const QString path = model_->filePath(toSourceIndex(index));
+        if (!path.isEmpty() && !paths.contains(path)) {
+            paths.append(path);
+        }
+    }
+    return paths;
+}
+
+void FileBrowserWidget::copySelectionToClipboard(const QString &clickedPath, bool useSelection) {
+    QStringList paths = useSelection ? selectedPaths() : QStringList();
+    if (paths.isEmpty() && !clickedPath.isEmpty() && QFileInfo(clickedPath).exists()) {
+        paths.append(clickedPath);
+    }
+    if (paths.isEmpty()) {
+        return;
+    }
+
+    auto *mimeData = new QMimeData();
+    QList<QUrl> urls;
+    for (const QString &path : paths) {
+        urls.append(QUrl::fromLocalFile(path));
+    }
+    mimeData->setUrls(urls);
+    QGuiApplication::clipboard()->setMimeData(mimeData);
+}
+
+void FileBrowserWidget::pasteFromClipboard(const QString &destination) {
+    const QStringList paths = localClipboardPaths();
+    if (paths.isEmpty()) {
+        return;
+    }
+
+    const QString targetDirectory = destination.isEmpty() ? currentPath_ : destination;
+    QString error;
+    if (!fileOperationService_->copyWithAutoRename(paths, targetDirectory, &error)) {
+        showOperationError(error);
+        return;
+    }
+    refreshCurrentDirectory();
+}
+
+QString FileBrowserWidget::targetDirectoryForPath(const QString &path) const {
+    const QFileInfo info(path);
+    return info.isDir() ? info.absoluteFilePath() : info.absolutePath();
+}
+
+void FileBrowserWidget::createFolderFromMenu(const QString &parentDir) {
+    bool accepted = false;
+    const QString name = QInputDialog::getText(this, tr("New Folder"), tr("Folder name:"), QLineEdit::Normal, tr("New Folder"), &accepted);
+    if (!accepted) {
+        return;
+    }
+
+    QString error;
+    if (!fileOperationService_->createFolder(parentDir, name, &error)) {
+        showOperationError(error);
+        return;
+    }
+    refreshCurrentDirectory();
+}
+
+void FileBrowserWidget::createTextFileFromMenu(const QString &parentDir) {
+    bool accepted = false;
+    const QString name = QInputDialog::getText(this, tr("New Text File"), tr("File name:"), QLineEdit::Normal, tr("New Text File.txt"), &accepted);
+    if (!accepted) {
+        return;
+    }
+
+    QString error;
+    if (!fileOperationService_->createTextFile(parentDir, name, &error)) {
+        showOperationError(error);
+        return;
+    }
+    refreshCurrentDirectory();
+}
+
+void FileBrowserWidget::movePathFromMenu(const QString &path) {
+    const QString destination = QFileDialog::getExistingDirectory(this, tr("Move To"), currentPath_);
+    if (destination.isEmpty()) {
+        return;
+    }
+
+    QString error;
+    if (!fileOperationService_->move({path}, destination, &error)) {
+        showOperationError(error);
+        return;
+    }
+    refreshCurrentDirectory();
+}
+
+void FileBrowserWidget::renamePathFromMenu(const QString &path) {
+    const QFileInfo info(path);
+    bool accepted = false;
+    const QString name = QInputDialog::getText(this, tr("Rename"), tr("New name:"), QLineEdit::Normal, info.fileName(), &accepted);
+    if (!accepted) {
+        return;
+    }
+
+    QString error;
+    if (!fileOperationService_->renamePath(path, name, &error)) {
+        showOperationError(error);
+        return;
+    }
+    refreshCurrentDirectory();
+}
+
+void FileBrowserWidget::deletePathsFromMenu(const QString &clickedPath, bool useSelection) {
+    QStringList paths = useSelection ? selectedPaths() : QStringList();
+    if (paths.isEmpty() && !clickedPath.isEmpty()) {
+        paths.append(clickedPath);
+    }
+    if (paths.isEmpty()) {
+        return;
+    }
+
+    QString error;
+    if (!fileOperationService_->deleteToTrash(paths, &error)) {
+        showOperationError(error);
+        return;
+    }
+    refreshCurrentDirectory();
+}
+
+void FileBrowserWidget::showPropertiesFromMenu(const QString &path) {
+    QString error;
+    if (!platformServicesForTests_->showProperties(path, &error)) {
+        showOperationError(error);
+    }
+}
+
+void FileBrowserWidget::showOperationError(const QString &error) {
+    emit errorOccurred(error);
+}
+
+void FileBrowserWidget::openTargetInTerminal(const QString &path) {
+    const QString targetDirectory = targetDirectoryForPath(path);
+    QString error;
+    if (!terminalService_->open(targetDirectory, &error)) {
+        showOperationError(error);
+    }
+}
+
+QModelIndex FileBrowserWidget::toSourceIndex(const QModelIndex &index) const {
+    if (!index.isValid()) {
+        return {};
+    }
+    return index.model() == sortModel_ ? sortModel_->mapToSource(index) : index;
+}
+
+QModelIndex FileBrowserWidget::toViewIndex(const QModelIndex &index) const {
+    if (!index.isValid()) {
+        return {};
+    }
+    return sortModel_ == nullptr ? index : sortModel_->mapFromSource(index);
 }
